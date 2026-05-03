@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SS-COP Analyzer - Login</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="./src/style.css">
+    <link rel="stylesheet" href="./src/login.css">
+</head>
+
+<body>
+    <div class="login-container">
+        <div class="login-card">
+            <div class="brand-header">
+                <!-- Placeholder for logo if needed, using text for now -->
+                <h1>SS-COP <span class="highlight">Analyzer</span></h1>
+                <p class="subtitle">Secure Access Portal</p>
+            </div>
+
+            <form id="loginForm" class="login-form">
+                <div class="form-group">
+                    <label for="username">Username</label>
+                    <div class="input-wrapper">
+                        <input type="text" id="username" name="username" placeholder="SS-COP" required
+                            autocomplete="username">
+                        <span class="icon">👤</span>
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label for="password">Password</label>
+                    <div class="input-wrapper">
+                        <input type="password" id="password" name="password" placeholder="••••••••" required
+                            autocomplete="current-password">
+                        <span class="icon">🔒</span>
+                    </div>
+                </div>
+
+                <div class="form-options">
+                    <label class="checkbox-label">
+                        <input type="checkbox" name="remember">
+                        <span>Remember me</span>
+                    </label>
+                    <a href="#" class="forgot-link">Forgot password?</a>
+                </div>
+
+                <button type="submit" class="btn primary full-width">
+                    Sign In
+                    <span class="arrow">→</span>
+                </button>
+            </form>
+
+            <div class="login-footer">
+                <p>Don't have an account? <a href="#">Contact Admin</a></p>
+            </div>
+        </div>
+    </div>
+
+    <script type="module" src="./src/login.js"></script>
+</body>
+
+</html>

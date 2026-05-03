@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Customer Complaints Geolocator</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
+</head>
+
+<body>
+  <div id="app">
+    <nav class="navbar">
+      <div class="brand">
+        <button id="toggleSidebarBtn" class="btn icon-only" title="Toggle Sidebar">
+          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"
+            stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="3" y1="12" x2="21" y2="12"></line>
+            <line x1="3" y1="6" x2="21" y2="6"></line>
+            <line x1="3" y1="18" x2="21" y2="18"></line>
+          </svg>
+        </button>
+        <img src="/logo.jpg" alt="Logo" class="logo-img" />
+        <h1>Customer Complaints <span class="highlight">Geolocator</span></h1>
+      </div>
+      <div class="controls">
+        <!-- Search -->
+        <div class="nav-group search-group">
+          <input type="text" id="siteSearchInput" placeholder="Search site, locality, commune..." />
+          <button id="siteSearchBtn" class="btn icon-only" title="Search">🔍</button>
+          <button id="clearSearchBtn" class="btn icon-only" title="Clear Search">✕</button>
+          <div class="search-results-dropdown" id="searchResultsDropdown" style="display: none;"></div>
+        </div>
+
+        <!-- Manual Add -->
+        <div class="nav-group manual-add-group">
+          <input type="text" id="manualSiteName" placeholder="Name" class="small-input" />
+          <input type="number" id="manualLat" placeholder="Lat" step="any" class="small-input" />
+          <input type="number" id="manualLng" placeholder="Lng" step="any" class="small-input" />
+          <button id="addSiteBtn" class="btn primary icon-only" title="Add Site">+</button>
+        </div>
+
+        <div class="nav-divider"></div>
+
+        <button id="exportHierarchyBtn" class="btn secondary">Export Hierarchy</button>
+        <button id="exportBtn" class="btn secondary" disabled>Export Results</button>
+      </div>
+    </nav>
+
+    <main class="dashboard">
+      <section class="sidebar">
+        <div class="card upload-card">
+          <h2>Import Data</h2>
+          <p class="subtitle">Upload Excel data and the app will normalize latitude and longitude before plotting.</p>
+
+          <div class="drop-zone" id="dropZone">
+            <div class="icon">📂</div>
+            <p>Drag & Drop your file here</p>
+            <p class="small">or click to browse</p>
+            <input type="file" id="fileInput" accept=".xlsx, .xls" hidden />
+          </div>
+
+          <div class="status-box" id="statusBox" style="display: none;">
+            <div class="spinner"></div>
+            <span id="statusText">Processing...</span>
+          </div>
+
+          <p id="importSummaryText" class="import-summary"></p>
+        </div>
+
+
+
+
+
+        <div class="card layers-card">
+          <h2>Hierarchy & Layers</h2>
+
+          <div class="hierarchy-section">
+            <div class="section-header">
+              <h3>Regions</h3>
+              <button id="resetRegionBtn" class="btn icon-only small" title="Show All">↻</button>
+            </div>
+            <div id="regionList" class="scroll-list"></div>
+          </div>
+
+          <div class="hierarchy-section">
+            <div class="section-header">
+              <h3>Directions Régionales (DR)</h3>
+            </div>
+            <div id="drList" class="scroll-list"></div>
+          </div>
+
+          <div class="hierarchy-section">
+            <div class="section-header">
+              <h3>Provinces</h3>
+            </div>
+            <div id="provinceList" class="scroll-list"></div>
+          </div>
+
+          <div class="hierarchy-section">
+            <div class="section-header">
+              <h3>Communes</h3>
+            </div>
+            <div id="communeList" class="scroll-list"></div>
+          </div>
+        </div>
+
+        <div class="card stats-card" id="statsCard" style="display: none;">
+          <h2>Statistics</h2>
+          <div class="stat-item">
+            <span class="label">Total Points</span>
+            <span class="value" id="totalPoints">0</span>
+          </div>
+          <div class="stat-item">
+            <span class="label">Matched</span>
+            <span class="value" id="matchedPoints">0</span>
+          </div>
+          <div class="stat-item">
+            <span class="label">Empty SS</span>
+            <span class="value" id="emptySSPoints">0</span>
+          </div>
+        </div>
+
+        <div class="card filters-card" id="filtersCard" style="display: none; margin-top: 1rem;">
+          <h2>Filters</h2>
+          <div class="layer-toggle">
+            <input type="checkbox" id="filterEmptySS">
+            <label for="filterEmptySS">Show Only Empty SS</label>
+          </div>
+          <div class="layer-toggle">
+            <input type="checkbox" id="filterGeographyDivergence">
+            <label for="filterGeographyDivergence">Show Only Geography Divergences</label>
+          </div>
+          <div class="layer-toggle">
+            <input type="checkbox" id="filterHighRisk">
+            <label for="filterHighRisk">Show Only High Review Risk</label>
+          </div>
+          <div class="audit-filter-bar" id="auditFilterBar" style="display: none;">
+            <span class="audit-filter-label" id="auditFilterLabel">Active audit filter</span>
+            <button id="clearAuditFilterBtn" class="btn secondary small-text">Clear</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="content">
+        <div class="map-container">
+          <!-- Controls moved to navbar -->
+          <div id="map"></div>
+          <div id="drLegend" class="map-legend" style="display: none;"></div>
+        </div>
+
+        <div class="table-container card" id="tableContainer">
+          <div class="resize-handle" id="resizeHandle"></div>
+          <h2>Analysis Results</h2>
+          <p class="table-note">The calculated geographic fields below are derived from the normalized latitude/longitude of each site.</p>
+          <div class="table-scroll">
+            <table id="resultsTable">
+              <thead>
+                <tr>
+                  <th>Site Name</th>
+                  <th>Latitude</th>
+                  <th>Longitude</th>
+                  <th>Matched Localité</th>
+                  <th>Distance (km)</th>
+                  <th>Nearest Place</th>
+                  <th>Distance (km)</th>
+                  <th>Calculated Commune</th>
+                  <th>Calculated Province</th>
+                  <th>Calculated Region</th>
+                  <th>Calculated DR</th>
+                  <th>Code</th>
+                  <th>Provice</th>
+                  <th>Commune</th>
+                  <th>Localité</th>
+                  <th>Sous-Localité</th>
+                  <th>Réseaux mobiles Voix et Data (2G ou 2G/3G ou 2G/3G/4G)</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr class="empty-state">
+                  <td colspan="17">No data imported yet. Upload an Excel file to begin.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="audit-grid" id="comparisonGrid" style="display: none;">
+          <div class="audit-card card">
+            <h2>Count Divergences</h2>
+            <p class="table-note" id="countDivergenceSummary">Original file vs calculated geography counts.</p>
+            <div class="table-scroll audit-scroll">
+              <table id="countDivergenceTable">
+                <thead>
+                  <tr>
+                    <th>Field</th>
+                    <th>Value</th>
+                    <th>Original Count</th>
+                    <th>Calculated Count</th>
+                    <th>Difference</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr class="empty-state">
+                    <td colspan="5">No divergence data yet. Import an Excel file to begin.</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="audit-card card">
+            <h2>Row Divergences</h2>
+            <p class="table-note" id="rowDivergenceSummary">Rows where the original file geography differs from the calculated geography.</p>
+            <div class="table-scroll audit-scroll">
+              <table id="rowDivergenceTable">
+                <thead>
+                  <tr>
+                    <th>Code</th>
+                    <th>Localité</th>
+                    <th>Field</th>
+                    <th>Original</th>
+                    <th>Calculated</th>
+                    <th>Nearest Place</th>
+                    <th>Inhabited Area</th>
+                    <th>Risk</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr class="empty-state">
+                    <td colspan="8">No divergence data yet. Import an Excel file to begin.</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+  <script type="module" src="/src/main.js"></script>
+</body>
+
+</html>
