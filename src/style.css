@@ -535,6 +535,13 @@ input[type="number"]:focus {
   letter-spacing: 0.02em;
 }
 
+.search-result-alias {
+  color: rgba(191, 219, 254, 0.92);
+  font-size: 0.76rem;
+  letter-spacing: 0.01em;
+  line-height: 1.2;
+}
+
 .search-result-hint {
   padding: 0.55rem 0.85rem 0.3rem;
   color: var(--text-muted);

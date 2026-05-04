@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>SS-COP Analyzer - Login</title>
+    <title>SS-COP Analyzer - Access</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
@@ -16,46 +16,24 @@
     <div class="login-container">
         <div class="login-card">
             <div class="brand-header">
-                <!-- Placeholder for logo if needed, using text for now -->
                 <h1>SS-COP <span class="highlight">Analyzer</span></h1>
-                <p class="subtitle">Secure Access Portal</p>
+                <p class="subtitle">Open the analyzer from this entry page.</p>
             </div>
 
-            <form id="loginForm" class="login-form">
-                <div class="form-group">
-                    <label for="username">Username</label>
-                    <div class="input-wrapper">
-                        <input type="text" id="username" name="username" placeholder="SS-COP" required
-                            autocomplete="username">
-                        <span class="icon">👤</span>
-                    </div>
+            <div class="login-form" aria-label="Application access">
+                <div class="access-note">
+                    <p>This frontend build does not include real authentication yet.</p>
+                    <p>Use the button below to open the web app directly.</p>
                 </div>
 
-                <div class="form-group">
-                    <label for="password">Password</label>
-                    <div class="input-wrapper">
-                        <input type="password" id="password" name="password" placeholder="••••••••" required
-                            autocomplete="current-password">
-                        <span class="icon">🔒</span>
-                    </div>
-                </div>
-
-                <div class="form-options">
-                    <label class="checkbox-label">
-                        <input type="checkbox" name="remember">
-                        <span>Remember me</span>
-                    </label>
-                    <a href="#" class="forgot-link">Forgot password?</a>
-                </div>
-
-                <button type="submit" class="btn primary full-width">
-                    Sign In
+                <a id="openAppBtn" href="./index.html" class="btn primary full-width access-link">
+                    Open Analyzer
                     <span class="arrow">→</span>
-                </button>
-            </form>
+                </a>
+            </div>
 
             <div class="login-footer">
-                <p>Don't have an account? <a href="#">Contact Admin</a></p>
+                <p>Next improvement: connect this page to real server-side authentication if access control is required.</p>
             </div>
         </div>
     </div>

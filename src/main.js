@@ -1,11 +1,8 @@
 import './style.css';
 import * as L from 'leaflet';
 import * as turf from '@turf/turf';
-import * as XLSX from 'xlsx';
 import 'leaflet-control-geocoder/dist/Control.Geocoder.css';
 import 'leaflet-control-geocoder';
-import { initCoverageService, getCoverage } from './coverageService';
-import { parseWorkbookPoints } from './coordinateNormalizer';
 
 // --- State ---
 const state = {
@@ -20,6 +17,12 @@ const state = {
     regionColors: {}, // Map<regionName, color>
     emergencyData: [], // Array of rows from emergency excel
     emergencyDataMap: new Map(), // Map<normalized_commune, row>
+    spatialIndexes: {
+        regions: null,
+        provinces: null,
+        communes: null,
+        drs: null
+    },
     referencePlaces: [],
     referencePlaceGrid: new Map(),
     referencePlaceNameIndex: new Map(),
@@ -55,9 +58,87 @@ const PLACE_GRID_CELL_SIZE = 0.25;
 const PLACE_GRID_SEARCH_RADIUS = 4;
 const HIGH_RISK_THRESHOLD = 60;
 const SEARCH_DEBOUNCE_MS = 250;
+const SPATIAL_INDEX_CELL_SIZE = 0.5;
 const WIKIMAPIA_RESULT_LIMIT = 5;
 let markerRenderFrame = null;
 let searchInputTimer = null;
+let xlsxModulePromise = null;
+let coordinateNormalizerModulePromise = null;
+let analysisWorker = null;
+let analysisWorkerInitPromise = null;
+let analysisRequestCounter = 0;
+
+function loadXlsxModule() {
+    if (!xlsxModulePromise) {
+        xlsxModulePromise = import('xlsx');
+    }
+    return xlsxModulePromise;
+}
+
+function loadCoordinateNormalizerModule() {
+    if (!coordinateNormalizerModulePromise) {
+        coordinateNormalizerModulePromise = import('./coordinateNormalizer');
+    }
+    return coordinateNormalizerModulePromise;
+}
+
+function resetAnalysisWorker() {
+    if (analysisWorker) {
+        analysisWorker.terminate();
+    }
+    analysisWorker = null;
+    analysisWorkerInitPromise = null;
+}
+
+function getAnalysisWorkerContextPayload() {
+    return {
+        layers: {
+            regions: state.layers.regions,
+            provinces: state.layers.provinces,
+            communes: state.layers.communes,
+            drs: state.layers.drs
+        },
+        emergencyData: state.emergencyData,
+        referencePlaces: state.referencePlaces,
+        inhabitedAreas: state.inhabitedAreas
+    };
+}
+
+function ensureAnalysisWorker() {
+    if (analysisWorkerInitPromise) {
+        return analysisWorkerInitPromise;
+    }
+
+    analysisWorker = new Worker(new URL('./analysisWorker.js', import.meta.url), { type: 'module' });
+
+    analysisWorkerInitPromise = new Promise((resolve, reject) => {
+        const handleMessage = (event) => {
+            if (event.data?.type !== 'ready') return;
+            cleanup();
+            resolve(analysisWorker);
+        };
+
+        const handleError = (error) => {
+            cleanup();
+            resetAnalysisWorker();
+            reject(error);
+        };
+
+        const cleanup = () => {
+            analysisWorker?.removeEventListener('message', handleMessage);
+            analysisWorker?.removeEventListener('error', handleError);
+        };
+
+        analysisWorker.addEventListener('message', handleMessage);
+        analysisWorker.addEventListener('error', handleError);
+        analysisWorker.postMessage({
+            type: 'init',
+            payload: getAnalysisWorkerContextPayload()
+        });
+    });
+
+    return analysisWorkerInitPromise;
+}
 
 // --- Initialization ---
 const map = L.map('map').setView([31.7917, -7.0926], 6); // Centered on Morocco
@@ -151,11 +232,16 @@ const auditFilterLabel = document.getElementById('auditFilterLabel');
 const clearAuditFilterBtn = document.getElementById('clearAuditFilterBtn');
 // const statsCard = document.getElementById('statsCard');
 const exportBtn = document.getElementById('exportBtn');
+const exportDisplayedBtn = document.getElementById('exportDisplayedBtn');
 const exportHierarchyBtn = document.getElementById('exportHierarchyBtn');
 const siteSearchInput = document.getElementById('siteSearchInput');
 const siteSearchBtn = document.getElementById('siteSearchBtn');
 const clearSearchBtn = document.getElementById('clearSearchBtn');
 const searchResultsDropdown = document.getElementById('searchResultsDropdown');
+const wikimapiaApiKeyInput = document.getElementById('wikimapiaApiKeyInput');
+const saveWikimapiaKeyBtn = document.getElementById('saveWikimapiaKeyBtn');
+const clearWikimapiaKeyBtn = document.getElementById('clearWikimapiaKeyBtn');
+const wikimapiaKeyStatus = document.getElementById('wikimapiaKeyStatus');
 const toggleSidebarBtn = document.getElementById('toggleSidebarBtn');
 const sidebar = document.querySelector('.sidebar');
 const manualSiteName = document.getElementById('manualSiteName');
@@ -174,17 +260,18 @@ async function loadGeoData() {
             fetch(`/data/regions.json?v=${timestamp}`),
             fetch(`/data/provinces.json?v=${timestamp}`),
             fetch(`/data/communes.json?v=${timestamp}`),
-            fetch(`/data/emergency_numbers.xlsx?v=${timestamp}`),
-            fetch(`/data/province_to_dr.xlsx?v=${timestamp}`),
+            fetch(`/data/emergency_numbers.json?v=${timestamp}`),
+            fetch(`/data/province_to_dr.json?v=${timestamp}`),
             fetch(`/data/drs.json?v=${timestamp}`),
             fetch(`/data/lieux_places.json?v=${timestamp}`),
-            fetch(`/data/zones_habitees_areas.json?v=${timestamp}`),
-            initCoverageService()
+            fetch(`/data/zones_habitees_areas.json?v=${timestamp}`)
         ]);
 
         state.layers.regions = await regionsRes.json();
         state.layers.provinces = await provincesRes.json();
         state.layers.communes = await communesRes.json();
+        state.emergencyData = await emergencyRes.json();
+        const drRows = await drMappingRes.json();
         const lieuxPayload = await lieuxRes.json();
         state.referencePlaces = lieuxPayload.places || [];
         state.referencePlaceGrid = buildReferencePlaceGrid(state.referencePlaces);
@@ -203,13 +290,7 @@ async function loadGeoData() {
             }
         }));
 
-        // Parse Emergency Excel & Build Map
-        const ab = await emergencyRes.arrayBuffer();
-        const wb = XLSX.read(ab, { type: 'array' });
-        const sheet = wb.Sheets[wb.SheetNames[0]];
-        state.emergencyData = XLSX.utils.sheet_to_json(sheet);
-
-        // Build Index
+        // Build emergency index
         state.emergencyDataMap.clear();
         const norm = (str) => String(str || '').trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
 
@@ -232,6 +313,9 @@ async function loadGeoData() {
         calcBBoxes(state.layers.regions);
         calcBBoxes(state.layers.provinces);
         calcBBoxes(state.layers.communes);
+        state.spatialIndexes.regions = buildSpatialFeatureIndex(state.layers.regions.features);
+        state.spatialIndexes.provinces = buildSpatialFeatureIndex(state.layers.provinces.features);
+        state.spatialIndexes.communes = buildSpatialFeatureIndex(state.layers.communes.features);
 
 
         // --- Region Coloring ---
@@ -266,12 +350,8 @@ async function loadGeoData() {
         try {
             // Load pre-generated DRs
             state.layers.drs = await drsRes.json();
-
-            // Load Mapping for Filtering
-            const drAb = await drMappingRes.arrayBuffer();
-            const drWb = XLSX.read(drAb, { type: 'array' });
-            const drSheet = drWb.Sheets[drWb.SheetNames[0]];
-            const drRows = XLSX.utils.sheet_to_json(drSheet);
+            calcBBoxes(state.layers.drs);
+            state.spatialIndexes.drs = buildSpatialFeatureIndex(state.layers.drs.features);
 
             const drMap = new Map();
             drRows.forEach(row => {
@@ -323,9 +403,12 @@ async function loadGeoData() {
 
         } catch (e) {
             console.error("Error processing DR mapping:", e);
+            state.spatialIndexes.drs = null;
         }
 
-
+        updateStatus(true, 'Preparing analysis engine...');
+        resetAnalysisWorker();
+        await ensureAnalysisWorker();
 
         updateStatus(false);
 
@@ -403,6 +486,10 @@ async function processExcel(file) {
     const reader = new FileReader();
     reader.onload = async (e) => {
         try {
+            const [{ parseWorkbookPoints }, XLSX] = await Promise.all([
+                loadCoordinateNormalizerModule(),
+                loadXlsxModule()
+            ]);
             const data = new Uint8Array(e.target.result);
             const workbook = XLSX.read(data, { type: 'array' });
             const { points, summary } = parseWorkbookPoints(workbook);
@@ -452,6 +539,22 @@ function escapeHtml(value) {
         .replace(/'/g, '&#39;');
 }
 
+function appendCell(row, value, { className = '', title = '', colSpan = 1 } = {}) {
+    const cell = document.createElement('td');
+    cell.textContent = String(value ?? '');
+    if (className) {
+        cell.className = className;
+    }
+    if (title) {
+        cell.title = title;
+    }
+    if (colSpan > 1) {
+        cell.colSpan = colSpan;
+    }
+    row.appendChild(cell);
+    return cell;
+}
+
 function normalizeName(value) {
     return String(value || '')
         .trim()
@@ -466,6 +569,45 @@ function normalizeSearchText(value) {
 
 function roundTo(value, decimals = 6) {
     return Number(Number(value).toFixed(decimals));
+}
+
+function getSpatialIndexKey(lng, lat, cellSize = SPATIAL_INDEX_CELL_SIZE) {
+    const x = Math.floor(lng / cellSize);
+    const y = Math.floor(lat / cellSize);
+    return `${x}:${y}`;
+}
+
+function buildSpatialFeatureIndex(features, cellSize = SPATIAL_INDEX_CELL_SIZE) {
+    const buckets = new Map();
+
+    features.forEach((feature) => {
+        if (!feature?.bbox) return;
+
+        const [minX, minY, maxX, maxY] = feature.bbox;
+        const startX = Math.floor(minX / cellSize);
+        const endX = Math.floor(maxX / cellSize);
+        const startY = Math.floor(minY / cellSize);
+        const endY = Math.floor(maxY / cellSize);
+
+        for (let x = startX; x <= endX; x += 1) {
+            for (let y = startY; y <= endY; y += 1) {
+                const key = `${x}:${y}`;
+                if (!buckets.has(key)) {
+                    buckets.set(key, []);
+                }
+                buckets.get(key).push(feature);
+            }
+        }
+    });
+
+    buckets.forEach((bucket) => {
+        bucket.sort((a, b) => getBBoxArea(a.bbox) - getBBoxArea(b.bbox));
+    });
+
+    return {
+        cellSize,
+        buckets
+    };
 }
 
 function buildSearchVariants(value) {
@@ -743,12 +885,13 @@ function getSpatialFeatureName(feature) {
         || 'N/A';
 }
 
-function findLayerMatchValueForCoordinates(lat, lng, layer) {
+function findLayerMatchValueForCoordinates(lat, lng, layer, spatialIndex = null) {
     if (!layer?.features) return 'N/A';
 
     const pointFeature = turf.point([lng, lat]);
+    const candidateFeatures = spatialIndex?.buckets?.get(getSpatialIndexKey(lng, lat, spatialIndex.cellSize)) || layer.features;
 
-    for (const feature of layer.features) {
+    for (const feature of candidateFeatures) {
         if (feature.bbox) {
             const [minX, minY, maxX, maxY] = feature.bbox;
             if (lng < minX || lng > maxX || lat < minY || lat > maxY) {
@@ -766,10 +909,10 @@ function findLayerMatchValueForCoordinates(lat, lng, layer) {
 
 function getAdminContextForCoordinates(lat, lng) {
     return {
-        region: findLayerMatchValueForCoordinates(lat, lng, state.layers.regions),
-        dr: findLayerMatchValueForCoordinates(lat, lng, state.layers.drs),
-        province: findLayerMatchValueForCoordinates(lat, lng, state.layers.provinces),
-        commune: findLayerMatchValueForCoordinates(lat, lng, state.layers.communes)
+        region: findLayerMatchValueForCoordinates(lat, lng, state.layers.regions, state.spatialIndexes.regions),
+        dr: findLayerMatchValueForCoordinates(lat, lng, state.layers.drs, state.spatialIndexes.drs),
+        province: findLayerMatchValueForCoordinates(lat, lng, state.layers.provinces, state.spatialIndexes.provinces),
+        commune: findLayerMatchValueForCoordinates(lat, lng, state.layers.communes, state.spatialIndexes.communes)
     };
 }
 
@@ -1070,13 +1213,17 @@ function getRiskPillClass(level) {
     return 'risk-low';
 }
 
-function renderRiskPill(point) {
+function createRiskPillElement(point) {
     const level = point.reviewRiskLevel || 'Low';
     const score = Number.isFinite(point.reviewRiskScore) ? Math.round(point.reviewRiskScore) : 0;
     const title = point.reviewRiskReasons?.length
         ? `Review risk: ${point.reviewRiskReasons.join('; ')}`
         : 'Review risk: no major review signals';
-    return `<span class="risk-pill ${getRiskPillClass(level)}" title="${escapeHtml(title)}">${escapeHtml(level)} ${score}</span>`;
+    const pill = document.createElement('span');
+    pill.className = `risk-pill ${getRiskPillClass(level)}`;
+    pill.title = title;
+    pill.textContent = `${level} ${score}`;
+    return pill;
 }
 
 function getFeatureDisplayName(feature, type) {
@@ -1110,6 +1257,12 @@ function getSearchResultMetaLabel(result) {
         result.subLabel
     ].filter(Boolean);
     return parts.join(' • ');
+}
+
+function getSearchResultWikimapiaLabel(result) {
+    if (!result?.wikimapiaSuggestionName) return '';
+    const classLabel = result.wikimapiaSuggestionClass ? ` (${result.wikimapiaSuggestionClass})` : '';
+    return `Wikimapia: ${result.wikimapiaSuggestionName}${classLabel}`;
 }
 
 function scoreSearchField(query, candidate) {
@@ -1286,6 +1439,69 @@ function getWikimapiaApiKey() {
     }
 
     return '';
+}
+
+function updateWikimapiaKeyStatus() {
+    if (!wikimapiaApiKeyInput || !saveWikimapiaKeyBtn || !clearWikimapiaKeyBtn || !wikimapiaKeyStatus) {
+        return;
+    }
+
+    const envKey = String(import.meta.env.VITE_WIKIMAPIA_API_KEY || '').trim();
+    const activeKey = getWikimapiaApiKey();
+
+    if (envKey) {
+        wikimapiaApiKeyInput.value = '';
+        wikimapiaApiKeyInput.placeholder = 'Using Vite env API key';
+        wikimapiaApiKeyInput.disabled = true;
+        saveWikimapiaKeyBtn.disabled = true;
+        clearWikimapiaKeyBtn.disabled = true;
+        wikimapiaKeyStatus.textContent = 'Wikimapia search is on via Vite env key.';
+        wikimapiaKeyStatus.classList.add('active');
+        return;
+    }
+
+    wikimapiaApiKeyInput.disabled = false;
+    saveWikimapiaKeyBtn.disabled = false;
+    clearWikimapiaKeyBtn.disabled = false;
+    wikimapiaApiKeyInput.placeholder = 'Wikimapia API key';
+
+    if (activeKey) {
+        wikimapiaApiKeyInput.value = activeKey;
+        wikimapiaKeyStatus.textContent = 'Wikimapia search is on.';
+        wikimapiaKeyStatus.classList.add('active');
+    } else {
+        wikimapiaApiKeyInput.value = '';
+        wikimapiaKeyStatus.textContent = 'Wikimapia search is off.';
+        wikimapiaKeyStatus.classList.remove('active');
+    }
+}
+
+function saveWikimapiaApiKey() {
+    const key = String(wikimapiaApiKeyInput.value || '').trim();
+    try {
+        if (key) {
+            window.localStorage.setItem('wikimapia_api_key', key);
+            state.wikimapiaCache.clear();
+        } else {
+            window.localStorage.removeItem('wikimapia_api_key');
+            state.wikimapiaCache.clear();
+        }
+    } catch (error) {
+        console.warn('Unable to store Wikimapia API key.', error);
+    }
+
+    updateWikimapiaKeyStatus();
+}
+
+function clearWikimapiaApiKey() {
+    try {
+        window.localStorage.removeItem('wikimapia_api_key');
+        state.wikimapiaCache.clear();
+    } catch (error) {
+        console.warn('Unable to clear Wikimapia API key.', error);
+    }
+
+    updateWikimapiaKeyStatus();
 }
 
 function buildWikimapiaSearchTerms(queryText) {
@@ -1516,6 +1732,42 @@ function scoreWikimapiaResult(queryText, result) {
     return totalScore;
 }
 
+function scoreResultToWikimapiaPair(localResult, wikimapiaResult, queryText) {
+    if (!localResult || !wikimapiaResult) return -1;
+    if (!Number.isFinite(localResult.lat) || !Number.isFinite(localResult.lng)) return -1;
+    if (!Number.isFinite(wikimapiaResult.lat) || !Number.isFinite(wikimapiaResult.lng)) return -1;
+
+    const directNameScore = scoreSearchField(
+        normalizeSearchText(localResult.name),
+        normalizeSearchText(wikimapiaResult.name)
+    );
+    const localityHintScore = queryText
+        ? getBestLocalityReferenceScore(queryText, wikimapiaResult.name).score
+        : -1;
+    const distanceKm = haversineDistanceKm(localResult.lat, localResult.lng, wikimapiaResult.lat, wikimapiaResult.lng);
+
+    if (distanceKm > 20) {
+        return -1;
+    }
+
+    let pairScore = Math.max(directNameScore, localityHintScore);
+
+    if (pairScore < 0 && distanceKm <= 2) {
+        pairScore = 620;
+    }
+
+    if (pairScore < 0) {
+        return -1;
+    }
+
+    if (distanceKm <= 1) pairScore += 40;
+    else if (distanceKm <= 3) pairScore += 25;
+    else if (distanceKm <= 8) pairScore += 10;
+    else pairScore -= 10;
+
+    return pairScore;
+}
+
 function normalizeWikimapiaResult(rawPlace, queryText, sourceQuery) {
     const name = String(rawPlace?.title || rawPlace?.name || '').trim();
     const lat = Number(rawPlace?.location?.lat ?? rawPlace?.lat);
@@ -1611,11 +1863,43 @@ async function searchWikimapiaResults(queryText) {
     return topResults;
 }
 
-function mergeSearchResults(localResults, wikimapiaResults) {
+function mergeSearchResults(localResults, wikimapiaResults, queryText = '') {
     const merged = [];
     const bestByKey = new Map();
+    const pairedWikimapiaKeys = new Set();
 
-    [...localResults, ...wikimapiaResults].forEach((result) => {
+    const uniqueLocalResults = localResults.map((result) => ({ ...result }));
+    const uniqueWikimapiaResults = wikimapiaResults.map((result) => ({ ...result }));
+
+    uniqueLocalResults.forEach((localResult) => {
+        let bestPair = null;
+        let bestPairScore = -1;
+
+        uniqueWikimapiaResults.forEach((wikimapiaResult) => {
+            const pairScore = scoreResultToWikimapiaPair(localResult, wikimapiaResult, queryText);
+            if (pairScore > bestPairScore) {
+                bestPairScore = pairScore;
+                bestPair = wikimapiaResult;
+            }
+        });
+
+        if (bestPair && bestPairScore >= 700) {
+            localResult.wikimapiaSuggestionName = bestPair.name;
+            localResult.wikimapiaSuggestionClass = bestPair.subLabel || '';
+            pairedWikimapiaKeys.add(
+                `${normalizeSearchText(bestPair.name)}:${roundTo(bestPair.lat || 0, 5)}:${roundTo(bestPair.lng || 0, 5)}`
+            );
+        }
+    });
+
+    [...uniqueLocalResults, ...uniqueWikimapiaResults].forEach((result) => {
+        if (result.category === 'wikimapia') {
+            const pairedKey = `${normalizeSearchText(result.name)}:${roundTo(result.lat || 0, 5)}:${roundTo(result.lng || 0, 5)}`;
+            if (pairedWikimapiaKeys.has(pairedKey)) {
+                return;
+            }
+        }
+
         const key = `${result.category}:${normalizeSearchText(result.name)}:${roundTo(result.lat || 0, 5)}:${roundTo(result.lng || 0, 5)}`;
         const current = bestByKey.get(key);
         if (!current || (result.totalScore || 0) > (current.totalScore || 0)) {
@@ -1637,7 +1921,7 @@ function mergeSearchResults(localResults, wikimapiaResults) {
 async function findSearchResults(queryText) {
     const localResults = findLocalSearchResults(queryText);
     const wikimapiaResults = await searchWikimapiaResults(queryText);
-    return mergeSearchResults(localResults, wikimapiaResults);
+    return mergeSearchResults(localResults, wikimapiaResults, queryText);
 }
 
 function clearSearchSelection({ keepInput = false } = {}) {
@@ -1814,6 +2098,7 @@ function renderSearchResults(results, { loadingWikimapia = false } = {}) {
         item.innerHTML = `
             <span class="search-result-title">${escapeHtml(formatSearchResultLabel(result))}</span>
             <span class="search-result-meta">${escapeHtml(getSearchResultMetaLabel(result))}</span>
+            ${result.wikimapiaSuggestionName ? `<span class="search-result-alias">${escapeHtml(getSearchResultWikimapiaLabel(result))}</span>` : ''}
         `;
         item.addEventListener('click', () => {
             siteSearchInput.value = result.name;
@@ -2079,6 +2364,10 @@ function pointMatchesAuditFilter(point) {
 }
 
 function renderComparisonReport() {
+    if (!comparisonGrid || !countDivergenceSummary || !rowDivergenceSummary || !countDivergenceTableBody || !rowDivergenceTableBody) {
+        return;
+    }
+
     const { countDifferences, rowDivergences } = state.comparisonReport;
     const pointByCode = new Map(
         state.processedPoints.map((point) => [String(point.original?.Code || point.id), point])
@@ -2105,13 +2394,11 @@ function renderComparisonReport() {
             if (isSameAuditFilter(state.auditFilter, rowFilter)) {
                 row.classList.add('active');
             }
-            row.innerHTML = `
-                <td>${item.field}</td>
-                <td>${item.value}</td>
-                <td>${item.originalCount}</td>
-                <td>${item.calculatedCount}</td>
-                <td>${item.difference > 0 ? '+' : ''}${item.difference}</td>
-            `;
+            appendCell(row, item.field);
+            appendCell(row, item.value);
+            appendCell(row, item.originalCount);
+            appendCell(row, item.calculatedCount);
+            appendCell(row, `${item.difference > 0 ? '+' : ''}${item.difference}`);
             row.addEventListener('click', () => {
                 if (isSameAuditFilter(state.auditFilter, rowFilter)) {
                     clearAuditFilter();
@@ -2140,16 +2427,18 @@ function renderComparisonReport() {
             if (isSameAuditFilter(state.auditFilter, rowFilter)) {
                 row.classList.add('active');
             }
-            row.innerHTML = `
-                <td>${item.code}</td>
-                <td>${item.locality}</td>
-                <td>${item.field}</td>
-                <td>${item.original}</td>
-                <td>${item.calculated}</td>
-                <td>${item.nearestPlace ? `${item.nearestPlace} (${formatDistanceKm(item.nearestPlaceDistanceKm)} km)` : '-'}</td>
-                <td>${item.inhabitedArea ? `${item.inhabitedArea}${item.isInsideInhabitedArea ? '' : ` (${formatDistanceKm(item.inhabitedAreaDistanceKm)} km)`}` : '-'}</td>
-                <td>${point ? renderRiskPill(point) : '-'}</td>
-            `;
+            appendCell(row, item.code);
+            appendCell(row, item.locality);
+            appendCell(row, item.field);
+            appendCell(row, item.original);
+            appendCell(row, item.calculated);
+            appendCell(row, item.nearestPlace ? `${item.nearestPlace} (${formatDistanceKm(item.nearestPlaceDistanceKm)} km)` : '-');
+            appendCell(row, item.inhabitedArea ? `${item.inhabitedArea}${item.isInsideInhabitedArea ? '' : ` (${formatDistanceKm(item.inhabitedAreaDistanceKm)} km)`}` : '-');
+            const riskCell = appendCell(row, point ? '' : '-');
+            if (point) {
+                riskCell.textContent = '';
+                riskCell.appendChild(createRiskPillElement(point));
+            }
             row.addEventListener('click', () => {
                 setAuditFilter(rowFilter);
 
@@ -2265,19 +2554,118 @@ function renderVisiblePointMarkers() {
 
 function buildPointPopupHtml(point) {
     return `
-      <b>${point.displayName || point.id}</b><br>
-      Code: ${point.id}<br>
-      Network: ${getNetworkBadgeLabel(point)}<br>
-      Locality Match: ${formatLocalityReferenceLabel(point)}${point.localityReferenceName ? ` (${formatDistanceKm(point.localityReferenceDistanceKm)} km)` : ''}<br>
-      Nearest Place: ${formatNearestPlaceLabel(point)}${point.nearestPlaceName ? ` (${formatDistanceKm(point.nearestPlaceDistanceKm)} km)` : ''}<br>
-      Inhabited Area: ${formatInhabitedAreaLabel(point)}<br>
+      <b>${escapeHtml(point.displayName || point.id)}</b><br>
+      Code: ${escapeHtml(point.id)}<br>
+      Network: ${escapeHtml(getNetworkBadgeLabel(point))}<br>
+      Locality Match: ${escapeHtml(formatLocalityReferenceLabel(point))}${point.localityReferenceName ? ` (${formatDistanceKm(point.localityReferenceDistanceKm)} km)` : ''}<br>
+      Nearest Place: ${escapeHtml(formatNearestPlaceLabel(point))}${point.nearestPlaceName ? ` (${formatDistanceKm(point.nearestPlaceDistanceKm)} km)` : ''}<br>
+      Inhabited Area: ${escapeHtml(formatInhabitedAreaLabel(point))}<br>
       Inside inhabited area: ${point.isInsideInhabitedArea ? 'Yes' : 'No'}<br>
       Review Risk: ${point.reviewRiskLevel || 'Low'} (${Math.round(point.reviewRiskScore || 0)}/100)<br>
-      Commune: ${point.commune}<br>
-      Province: ${point.province}<br>
-      Region: ${point.region}<br>
+      Commune: ${escapeHtml(point.commune)}<br>
+      Province: ${escapeHtml(point.province)}<br>
+      Region: ${escapeHtml(point.region)}<br>
       ${point._isEmptySS ? '<b style="color:orange">Missing SS Data</b>' : ''}
     `;
+}
+
+function buildExportRows(points) {
+    return points.map((p) => ({
+        ...p.original,
+        'Display_Name': p.displayName || p.id,
+        'Normalized_Latitude': p.lat,
+        'Normalized_Longitude': p.lng,
+        'Locality_Name_Match': p.localityReferenceName || '',
+        'Locality_Name_Match_Distance_Km': Number.isFinite(p.localityReferenceDistanceKm) ? Number(p.localityReferenceDistanceKm.toFixed(3)) : '',
+        'Locality_Name_Match_Class': p.localityReferenceClass || '',
+        'Locality_Name_Match_Exact': p.localityReferenceExactMatch ? 'Yes' : 'No',
+        'Locality_Name_Match_Note': p.localityReferenceName && !p.localityReferenceExactMatch ? 'not matched 100%' : '',
+        'Locality_Name_Match_Source': p.localityReferenceSource || '',
+        'Locality_Name_Match_Url': p.localityReferenceUrl || '',
+        'Nearest_Place': p.nearestPlaceName || '',
+        'Nearest_Place_Distance_Km': Number.isFinite(p.nearestPlaceDistanceKm) ? Number(p.nearestPlaceDistanceKm.toFixed(3)) : '',
+        'Nearest_Place_Class': p.nearestPlaceClass || '',
+        'Inside_Inhabited_Area': p.isInsideInhabitedArea ? 'Yes' : 'No',
+        'Inhabited_Area': p.inhabitedAreaName || '',
+        'Inhabited_Area_Class': p.inhabitedAreaClass || '',
+        'Nearest_Inhabited_Area': p.nearestInhabitedAreaName || '',
+        'Nearest_Inhabited_Area_Distance_Km': Number.isFinite(p.nearestInhabitedAreaDistanceKm) ? Number(p.nearestInhabitedAreaDistanceKm.toFixed(3)) : '',
+        'Nearest_Inhabited_Area_Class': p.nearestInhabitedAreaClass || '',
+        'Review_Risk_Score': Number.isFinite(p.reviewRiskScore) ? Math.round(p.reviewRiskScore) : '',
+        'Review_Risk_Level': p.reviewRiskLevel || '',
+        'Review_Risk_Reasons': Array.isArray(p.reviewRiskReasons) ? p.reviewRiskReasons.join(' | ') : '',
+        'Normalization_Action': p.normalization?.normalizationAction || '',
+        'Normalization_Confidence': p.normalization?.normalizationConfidence || '',
+        'Auto_Commune': p.commune,
+        'Auto_Province': p.province,
+        'Auto_Region': p.region,
+        'Coverage_2G': p['2G'],
+        'Coverage_3G': p['3G'],
+        'Coverage_4G': p['4G'],
+        'Emergency_141': p['141'],
+        'Emergency_5757': p['5757'],
+        'Emergency_15': p['15'],
+        'Emergency_19': p['19'],
+        'Emergency_112': p['112'],
+        'Emergency_177': p['177']
+    }));
+}
+
+function buildDisplayedTableExportRows(points) {
+    const headers = [
+        'Site Name',
+        'Latitude',
+        'Longitude',
+        'Matched Localité',
+        'Distance (km)',
+        'Nearest Place',
+        'Distance (km)',
+        'Calculated Commune',
+        'Calculated Province',
+        'Calculated Region',
+        'Calculated DR',
+        'Code',
+        'Provice',
+        'Commune',
+        'Localité',
+        'Sous-Localité',
+        'Réseaux mobiles Voix et Data (2G ou 2G/3G ou 2G/3G/4G)'
+    ];
+
+    const rows = points.map((p) => {
+        const sourceCode = p.original?.Code || p.id || '-';
+        const sourceProvince = p.original?.Province || '-';
+        const sourceCommune = p.original?.Commune || '-';
+        const sourceLocality = p.original?.Localite || '-';
+        const sourceSubLocality = p.original?.SousLocalite || '-';
+        const sourceNetwork = p.original?.DeclarationIAM || '-';
+        const localityReferenceLabel = p.localityReferenceName || '-';
+        const localityReferenceDistance = Number.isFinite(p.localityReferenceDistanceKm) ? formatDistanceKm(p.localityReferenceDistanceKm) : '-';
+        const nearestPlaceLabel = formatNearestPlaceLabel(p);
+        const nearestPlaceDistance = Number.isFinite(p.nearestPlaceDistanceKm) ? formatDistanceKm(p.nearestPlaceDistanceKm) : '-';
+
+        return [
+            p.displayName || p.id,
+            p.lat.toFixed(5),
+            p.lng.toFixed(5),
+            localityReferenceLabel,
+            localityReferenceDistance,
+            nearestPlaceLabel,
+            nearestPlaceDistance,
+            p.commune,
+            p.province,
+            p.region,
+            p.dr,
+            sourceCode,
+            sourceProvince,
+            sourceCommune,
+            sourceLocality,
+            sourceSubLocality,
+            sourceNetwork
+        ];
+    });
+
+    return [headers, ...rows];
 }
 
 function clearFocusOverlays() {
@@ -2360,9 +2748,6 @@ function createRow(p) {
     const localityReferenceDistance = Number.isFinite(p.localityReferenceDistanceKm) ? formatDistanceKm(p.localityReferenceDistanceKm) : '-';
     const nearestPlaceLabel = formatNearestPlaceLabel(p);
     const nearestPlaceDistance = Number.isFinite(p.nearestPlaceDistanceKm) ? formatDistanceKm(p.nearestPlaceDistanceKm) : '-';
-    const divergenceTitle = p._hasGeographyDivergence
-        ? ` title="Geography divergence: ${escapeHtml(p._divergenceFields.join(', '))}"`
-        : '';
 
     const row = document.createElement('tr');
     row.id = `row-${p.id}`;
@@ -2374,25 +2759,23 @@ function createRow(p) {
     }
     row.classList.add('result-clickable-row');
     row.title = 'Click to zoom to this site on the map';
-    row.innerHTML = `
-        <td${divergenceTitle}>${p.displayName || p.id}${p._hasGeographyDivergence ? ' *' : ''}</td>
-        <td>${p.lat.toFixed(5)}</td>
-        <td>${p.lng.toFixed(5)}</td>
-        <td>${localityReferenceLabel}</td>
-        <td>${localityReferenceDistance}</td>
-        <td>${nearestPlaceLabel}</td>
-        <td>${nearestPlaceDistance}</td>
-        <td class="${p.commune !== 'N/A' ? '' : 'text-muted'}">${p.commune}</td>
-        <td class="${p.province !== 'N/A' ? '' : 'text-muted'}">${p.province}</td>
-        <td class="${p.region !== 'N/A' ? '' : 'text-muted'}">${p.region}</td>
-        <td class="${p.dr !== 'N/A' ? '' : 'text-muted'}">${p.dr}</td>
-        <td>${sourceCode}</td>
-        <td>${sourceProvince}</td>
-        <td>${sourceCommune}</td>
-        <td>${sourceLocality}</td>
-        <td>${sourceSubLocality}</td>
-        <td>${sourceNetwork}</td>
-    `;
+    appendCell(row, `${p.displayName || p.id}${p._hasGeographyDivergence ? ' *' : ''}`, { title: p._hasGeographyDivergence ? `Geography divergence: ${p._divergenceFields.join(', ')}` : '' });
+    appendCell(row, p.lat.toFixed(5));
+    appendCell(row, p.lng.toFixed(5));
+    appendCell(row, localityReferenceLabel);
+    appendCell(row, localityReferenceDistance);
+    appendCell(row, nearestPlaceLabel);
+    appendCell(row, nearestPlaceDistance);
+    appendCell(row, p.commune, { className: p.commune !== 'N/A' ? '' : 'text-muted' });
+    appendCell(row, p.province, { className: p.province !== 'N/A' ? '' : 'text-muted' });
+    appendCell(row, p.region, { className: p.region !== 'N/A' ? '' : 'text-muted' });
+    appendCell(row, p.dr, { className: p.dr !== 'N/A' ? '' : 'text-muted' });
+    appendCell(row, sourceCode);
+    appendCell(row, sourceProvince);
+    appendCell(row, sourceCommune);
+    appendCell(row, sourceLocality);
+    appendCell(row, sourceSubLocality);
+    appendCell(row, sourceNetwork);
     row.addEventListener('click', () => {
         focusPointOnMap(p);
     });
@@ -2425,7 +2808,7 @@ function analyzePoints() {
     if (!areGeoLayersReady()) {
         updateStatus(false);
         alert('Geographic layers are not ready yet, so the points cannot be analyzed. Please try again once the map data has finished loading.');
-        return;
+        return Promise.resolve(null);
     }
 
     state.mapLayerGroups.points.clearLayers();
@@ -2441,159 +2824,85 @@ function analyzePoints() {
     // Reset stats
     updateStats(state.points.length, 0, 0);
 
-    const CHUNK_SIZE = 200;
-    let currentIndex = 0;
-    let matchedCount = 0;
-    let emptySSCount = 0;
-
     // Disable export during processing
     exportBtn.disabled = true;
+    exportDisplayedBtn.disabled = true;
 
-    const norm = (str) => String(str || '').trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-
-    async function processChunk() {
-        const end = Math.min(currentIndex + CHUNK_SIZE, state.points.length);
-
-        for (let i = currentIndex; i < end; i++) {
-            const point = state.points[i];
-            const pt = turf.point([point.lng, point.lat]); // lng, lat
-
-            let commune = 'N/A';
-            let province = 'N/A';
-            let region = 'N/A';
-            let dr = 'N/A';
-
-            // Helper for optimized spatial check
-            const findInLayer = (layer) => {
-                if (!layer?.features) return 'N/A';
-
-                for (const feature of layer.features) {
-                    // Fast rejection using BBox
-                    // BBox format: [minX, minY, maxX, maxY]
-                    // Point format: [lng, lat]
-                    if (feature.bbox) {
-                        const [minX, minY, maxX, maxY] = feature.bbox;
-                        if (point.lng < minX || point.lng > maxX || point.lat < minY || point.lat > maxY) {
-                            continue;
-                        }
-                    } else {
-                        // Fallback calc if missing? Should be there.
-                    }
-
-                    if (turf.booleanPointInPolygon(pt, feature)) {
-                        return feature.properties.Nom_Region || feature.properties.Nom_Provin || feature.properties.Nom_Commun || feature.properties.NAME || 'N/A';
-                    }
+    return ensureAnalysisWorker()
+        .then((worker) => new Promise((resolve, reject) => {
+            const requestId = ++analysisRequestCounter;
+            const handleMessage = (event) => {
+                const message = event.data || {};
+                if (message.requestId !== requestId) {
+                    return;
                 }
-                return 'N/A';
-            };
 
-            // Order matters? Regions -> Provinces -> Communes
-            // Actually independent checks as per original code.
-            region = findInLayer(state.layers.regions);
-            dr = findInLayer(state.layers.drs);
-            province = findInLayer(state.layers.provinces);
-            commune = findInLayer(state.layers.communes);
-
-            // --- Emergency Lookup (Map O(1)) ---
-            let emergencyInfo = {
-                '141': '', '5757': '', '15': '', '19': '', '112': '', '177': ''
-            };
-
-            if (commune !== 'N/A') {
-                const match = state.emergencyDataMap.get(norm(commune));
-                if (match) {
-                    if (match['141']) emergencyInfo['141'] = match['141'];
-                    if (match['5757']) emergencyInfo['5757'] = match['5757'];
-                    if (match['15']) emergencyInfo['15'] = match['15'];
-                    if (match['19']) emergencyInfo['19'] = match['19'];
-                    if (match['112']) emergencyInfo['112'] = match['112'];
-                    if (match['177']) emergencyInfo['177'] = match['177'];
+                if (message.type === 'progress') {
+                    const { processedCount, total, matchedCount, emptySSCount } = message.payload;
+                    updateStatus(true, `Processed ${processedCount} / ${total} points...`);
+                    updateStats(total, matchedCount, emptySSCount);
+                    return;
                 }
-            }
 
-            // --- Coverage Lookup ---
-            // const coverage = await getCoverage(point.lat, point.lng); // optimization: removed
+                cleanup();
 
-            const result = {
-                ...point,
-                localityReferenceName: null,
-                localityReferenceDistanceKm: null,
-                localityReferenceClass: null,
-                localityReferenceExactMatch: false,
-                localityReferenceLat: null,
-                localityReferenceLng: null,
-                localityReferenceSource: null,
-                localityReferenceUrl: '',
-                nearestPlaceName: null,
-                nearestPlaceDistanceKm: null,
-                nearestPlaceClass: null,
-                nearestPlaceLat: null,
-                nearestPlaceLng: null,
-                isInsideInhabitedArea: false,
-                inhabitedAreaName: null,
-                inhabitedAreaClass: null,
-                nearestInhabitedAreaName: null,
-                nearestInhabitedAreaClass: null,
-                nearestInhabitedAreaDistanceKm: null,
-                reviewRiskScore: 0,
-                reviewRiskLevel: 'Low',
-                reviewRiskReasons: [],
-                region, dr, province, commune, ...emergencyInfo
+                if (message.type === 'complete') {
+                    finishAnalysis(message.payload);
+                    resolve(message.payload);
+                    return;
+                }
+
+                if (message.type === 'error') {
+                    reject(new Error(message.error || 'Unknown worker error'));
+                }
             };
 
-            const nearestPlace = findNearestReferencePlace(point.lat, point.lng);
-            if (nearestPlace) {
-                result.nearestPlaceName = nearestPlace.name;
-                result.nearestPlaceDistanceKm = nearestPlace.distanceKm;
-                result.nearestPlaceClass = nearestPlace.fclass;
-                result.nearestPlaceLat = nearestPlace.lat;
-                result.nearestPlaceLng = nearestPlace.lng;
-            }
+            const handleError = (error) => {
+                cleanup();
+                reject(error instanceof Error ? error : new Error('Analysis worker crashed.'));
+            };
 
-            const localityReference = findLocalityReferencePlace(result);
-            const localityOverride = state.localityReferenceOverrides.get(result.id);
-            if (localityOverride) {
-                applyLocalityReferenceToPoint(result, localityOverride, 'Wikimapia', localityOverride.url);
-            } else if (localityReference) {
-                applyLocalityReferenceToPoint(result, localityReference, 'Lieux reference');
-            }
+            const cleanup = () => {
+                worker.removeEventListener('message', handleMessage);
+                worker.removeEventListener('error', handleError);
+            };
 
-            Object.assign(result, findInhabitedAreaContext(point.lat, point.lng));
-
-            state.processedPoints.push(result);
-
-            if (commune !== 'N/A' || province !== 'N/A') matchedCount++;
-
-            // Calculate Empty SS: All emergency numbers are empty
-            const hasSSData = emergencyInfo['141'] || emergencyInfo['5757'] || emergencyInfo['15'] || emergencyInfo['19'] || emergencyInfo['112'] || emergencyInfo['177'];
-            if (!hasSSData) {
-                emptySSCount++;
-                result._isEmptySS = true; // Use result obj
-            } else {
-                result._isEmptySS = false;
-            }
-
-        }
-
-        currentIndex = end;
-        updateStatus(true, `Processed ${currentIndex} / ${state.points.length} points...`);
-        updateStats(state.points.length, matchedCount, emptySSCount);
-
-        if (currentIndex < state.points.length) {
-            setTimeout(processChunk, 0); // Next chunk
-        } else {
-            // Done
-            finishAnalysis(matchedCount, emptySSCount);
-        }
-    }
-
-    // Start
-    setTimeout(processChunk, 0);
+            worker.addEventListener('message', handleMessage);
+            worker.addEventListener('error', handleError);
+            worker.postMessage({
+                type: 'analyze',
+                requestId,
+                payload: {
+                    points: state.points,
+                    localityReferenceOverrides: Array.from(
+                        state.localityReferenceOverrides.entries(),
+                        ([id, override]) => [String(id), override]
+                    )
+                }
+            });
+        }))
+        .catch((error) => {
+            console.error(error);
+            resetAnalysisWorker();
+            updateStatus(false);
+            exportBtn.disabled = false;
+            exportDisplayedBtn.disabled = false;
+            alert(`Error analyzing points: ${error.message}`);
+            return null;
+        });
 }
 
-function finishAnalysis(matchedCount, emptySSCount) {
-    state.comparisonReport = buildComparisonReport(state.processedPoints);
-    state.processedPoints.forEach((point) => applyReviewRisk(point));
+function finishAnalysis(analysisResult) {
+    const {
+        processedPoints = [],
+        comparisonReport = { countDifferences: [], rowDivergences: [] },
+        matchedCount = 0,
+        emptySSCount = 0
+    } = analysisResult || {};
+
+    state.processedPoints = processedPoints;
+    state.comparisonReport = comparisonReport;
+    updateStats(state.points.length, matchedCount, emptySSCount);
     renderTable();
     renderComparisonReport();
     renderRegions();
@@ -2608,6 +2917,7 @@ function finishAnalysis(matchedCount, emptySSCount) {
         map.fitBounds(bounds, { padding: [50, 50] });
     }
     exportBtn.disabled = false;
+    exportDisplayedBtn.disabled = false;
 }
 
 // --- UI Updates ---
@@ -2630,14 +2940,22 @@ function updateLegend() {
     if (toggleRegions.checked) {
         hasContent = true;
         const section = document.createElement('div');
-        section.innerHTML = '<h4>Regions</h4>';
+        const title = document.createElement('h4');
+        title.textContent = 'Regions';
+        section.appendChild(title);
         drLegend.appendChild(section);
 
         Object.keys(state.regionColors).forEach(name => {
             const color = state.regionColors[name];
             const item = document.createElement('div');
             item.className = 'legend-item';
-            item.innerHTML = `<div class="legend-color" style="background: ${color}"></div><span>${name}</span>`;
+            const swatch = document.createElement('div');
+            swatch.className = 'legend-color';
+            swatch.style.background = color;
+            const label = document.createElement('span');
+            label.textContent = name;
+            item.appendChild(swatch);
+            item.appendChild(label);
             drLegend.appendChild(item);
         });
     }
@@ -2652,14 +2970,22 @@ function updateLegend() {
         }
         hasContent = true;
         const section = document.createElement('div');
-        section.innerHTML = '<h4>Directions Régionales</h4>';
+        const title = document.createElement('h4');
+        title.textContent = 'Directions Régionales';
+        section.appendChild(title);
         drLegend.appendChild(section);
 
         Object.keys(state.drColors).forEach(name => {
             const color = state.drColors[name];
             const item = document.createElement('div');
             item.className = 'legend-item';
-            item.innerHTML = `<div class="legend-color" style="background: ${color}"></div><span>${name}</span>`;
+            const swatch = document.createElement('div');
+            swatch.className = 'legend-color';
+            swatch.style.background = color;
+            const label = document.createElement('span');
+            label.textContent = name;
+            item.appendChild(swatch);
+            item.appendChild(label);
             drLegend.appendChild(item);
         });
     }
@@ -3007,46 +3333,9 @@ resetRegionBtn.addEventListener('click', () => {
 });
 
 // --- Export ---
-exportBtn.addEventListener('click', () => {
-    const dataToExport = state.processedPoints.map(p => ({
-        ...p.original,
-        'Display_Name': p.displayName || p.id,
-        'Normalized_Latitude': p.lat,
-        'Normalized_Longitude': p.lng,
-        'Locality_Name_Match': p.localityReferenceName || '',
-        'Locality_Name_Match_Distance_Km': Number.isFinite(p.localityReferenceDistanceKm) ? Number(p.localityReferenceDistanceKm.toFixed(3)) : '',
-        'Locality_Name_Match_Class': p.localityReferenceClass || '',
-        'Locality_Name_Match_Exact': p.localityReferenceExactMatch ? 'Yes' : 'No',
-        'Locality_Name_Match_Note': p.localityReferenceName && !p.localityReferenceExactMatch ? 'not matched 100%' : '',
-        'Locality_Name_Match_Source': p.localityReferenceSource || '',
-        'Locality_Name_Match_Url': p.localityReferenceUrl || '',
-        'Nearest_Place': p.nearestPlaceName || '',
-        'Nearest_Place_Distance_Km': Number.isFinite(p.nearestPlaceDistanceKm) ? Number(p.nearestPlaceDistanceKm.toFixed(3)) : '',
-        'Nearest_Place_Class': p.nearestPlaceClass || '',
-        'Inside_Inhabited_Area': p.isInsideInhabitedArea ? 'Yes' : 'No',
-        'Inhabited_Area': p.inhabitedAreaName || '',
-        'Inhabited_Area_Class': p.inhabitedAreaClass || '',
-        'Nearest_Inhabited_Area': p.nearestInhabitedAreaName || '',
-        'Nearest_Inhabited_Area_Distance_Km': Number.isFinite(p.nearestInhabitedAreaDistanceKm) ? Number(p.nearestInhabitedAreaDistanceKm.toFixed(3)) : '',
-        'Nearest_Inhabited_Area_Class': p.nearestInhabitedAreaClass || '',
-        'Review_Risk_Score': Number.isFinite(p.reviewRiskScore) ? Math.round(p.reviewRiskScore) : '',
-        'Review_Risk_Level': p.reviewRiskLevel || '',
-        'Review_Risk_Reasons': Array.isArray(p.reviewRiskReasons) ? p.reviewRiskReasons.join(' | ') : '',
-        'Normalization_Action': p.normalization?.normalizationAction || '',
-        'Normalization_Confidence': p.normalization?.normalizationConfidence || '',
-        'Auto_Commune': p.commune,
-        'Auto_Province': p.province,
-        'Auto_Region': p.region,
-        'Coverage_2G': p['2G'],
-        'Coverage_3G': p['3G'],
-        'Coverage_4G': p['4G'],
-        'Emergency_141': p['141'],
-        'Emergency_5757': p['5757'],
-        'Emergency_15': p['15'],
-        'Emergency_19': p['19'],
-        'Emergency_112': p['112'],
-        'Emergency_177': p['177']
-    }));
+exportBtn.addEventListener('click', async () => {
+    const XLSX = await loadXlsxModule();
+    const dataToExport = buildExportRows(state.processedPoints);
 
     const ws = XLSX.utils.json_to_sheet(dataToExport);
     const wb = XLSX.utils.book_new();
@@ -3090,11 +3379,27 @@ exportBtn.addEventListener('click', () => {
     XLSX.writeFile(wb, "geo_analysis_results.xlsx");
 });
 
-exportHierarchyBtn.addEventListener('click', () => {
+exportDisplayedBtn.addEventListener('click', async () => {
+    const displayedPoints = state.filteredPoints.slice(0, 500);
+    if (!displayedPoints.length) {
+        alert('No rows are currently displayed in the table.');
+        return;
+    }
+
+    const XLSX = await loadXlsxModule();
+    const dataToExport = buildDisplayedTableExportRows(displayedPoints);
+    const ws = XLSX.utils.aoa_to_sheet(dataToExport);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Displayed Results");
+    XLSX.writeFile(wb, "geo_analysis_displayed_rows.xlsx");
+});
+
+exportHierarchyBtn.addEventListener('click', async () => {
     if (!state.layers.regions || !state.layers.provinces || !state.layers.communes) {
         alert("Map data not loaded yet.");
         return;
     }
+    const XLSX = await loadXlsxModule();
 
     const rows = [];
     const regions = state.layers.regions.features;
@@ -3227,23 +3532,40 @@ addSiteBtn.addEventListener('click', () => {
     // Optimization: Could just process this one point, but analyzePoints handles everything.
     // Given < 10k points, full re-run is acceptable for safety and simplicity.
     setTimeout(() => {
-        analyzePoints();
-
-        // After analysis, zoom to it
-        setTimeout(() => {
-            // Find it in processed to get correct ref? 
-            // Logic in analyzePoints clears processedPoints.
-            // We can just use the highlight logic since we know the ID.
+        analyzePoints().then((result) => {
+            if (!result) return;
             const found = state.processedPoints.find(p => p.id === name);
             if (found) {
                 focusPointOnMap(found);
             }
-        }, 500); // Wait for analyzePoints async chunks
+        });
     }, 100);
 });
 
+if (saveWikimapiaKeyBtn) {
+    saveWikimapiaKeyBtn.addEventListener('click', () => {
+        saveWikimapiaApiKey();
+    });
+}
+
+if (clearWikimapiaKeyBtn) {
+    clearWikimapiaKeyBtn.addEventListener('click', () => {
+        clearWikimapiaApiKey();
+    });
+}
+
+if (wikimapiaApiKeyInput) {
+    wikimapiaApiKeyInput.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter') {
+            event.preventDefault();
+            saveWikimapiaApiKey();
+        }
+    });
+}
+
 
 // Start
+updateWikimapiaKeyStatus();
 loadGeoData();
 // --- Resize Logic ---
 const resizeHandle = document.getElementById('resizeHandle');

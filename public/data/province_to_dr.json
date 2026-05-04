@@ -1,0 +1,377 @@
+[
+  {
+    "DR": "DRT",
+    "Région": "Tanger-Tetouan-Al Hoceima",
+    "Province": "Al Hoceima"
+  },
+  {
+    "DR": "DRT",
+    "Région": "Tanger-Tetouan-Al Hoceima",
+    "Province": "Chefchaouen"
+  },
+  {
+    "DR": "DRT",
+    "Région": "Tanger-Tetouan-Al Hoceima",
+    "Province": "Fahs-Anjra"
+  },
+  {
+    "DR": "DRT",
+    "Région": "Tanger-Tetouan-Al Hoceima",
+    "Province": "Larache"
+  },
+  {
+    "DR": "DRR",
+    "Région": "Tanger-Tetouan-Al Hoceima",
+    "Province": "Ouezzane"
+  },
+  {
+    "DR": "DRT",
+    "Région": "Tanger-Tetouan-Al Hoceima",
+    "Province": "Tanger-Assilah"
+  },
+  {
+    "DR": "DRT",
+    "Région": "Tanger-Tetouan-Al Hoceima",
+    "Province": "Tétouan"
+  },
+  {
+    "DR": "DRT",
+    "Région": "Tanger-Tetouan-Al Hoceima",
+    "Province": "M'Diq-Fnideq"
+  },
+  {
+    "DR": "DRO",
+    "Région": "Oriental",
+    "Province": "Berkane"
+  },
+  {
+    "DR": "DRO",
+    "Région": "Oriental",
+    "Province": "Driouch"
+  },
+  {
+    "DR": "DRO",
+    "Région": "Oriental",
+    "Province": "Figuig"
+  },
+  {
+    "DR": "DRO",
+    "Région": "Oriental",
+    "Province": "Guercif"
+  },
+  {
+    "DR": "DRO",
+    "Région": "Oriental",
+    "Province": "Jerada"
+  },
+  {
+    "DR": "DRO",
+    "Région": "Oriental",
+    "Province": "Nador"
+  },
+  {
+    "DR": "DRO",
+    "Région": "Oriental",
+    "Province": "Oujda-Angad"
+  },
+  {
+    "DR": "DRO",
+    "Région": "Oriental",
+    "Province": "Taourirt"
+  },
+  {
+    "DR": "DRF",
+    "Région": "Fès-Meknès",
+    "Province": "Meknès"
+  },
+  {
+    "DR": "DRF",
+    "Région": "Fès-Meknès",
+    "Province": "Boulemane"
+  },
+  {
+    "DR": "DRF",
+    "Région": "Fès-Meknès",
+    "Province": "El  Hajeb"
+  },
+  {
+    "DR": "DRF",
+    "Région": "Fès-Meknès",
+    "Province": "Fès"
+  },
+  {
+    "DR": "DRF",
+    "Région": "Fès-Meknès",
+    "Province": "Ifrane"
+  },
+  {
+    "DR": "DRF",
+    "Région": "Fès-Meknès",
+    "Province": "Sefrou"
+  },
+  {
+    "DR": "DRF",
+    "Région": "Fès-Meknès",
+    "Province": "Taounate"
+  },
+  {
+    "DR": "DRF",
+    "Région": "Fès-Meknès",
+    "Province": "Taza"
+  },
+  {
+    "DR": "DRF",
+    "Région": "Fès-Meknès",
+    "Province": "Moulay Yacoub"
+  },
+  {
+    "DR": "DRR",
+    "Région": "Rabat-Salé-Kénitra",
+    "Province": "Kénitra"
+  },
+  {
+    "DR": "DRR",
+    "Région": "Rabat-Salé-Kénitra",
+    "Province": "Khémisset"
+  },
+  {
+    "DR": "DRR",
+    "Région": "Rabat-Salé-Kénitra",
+    "Province": "Rabat"
+  },
+  {
+    "DR": "DRR",
+    "Région": "Rabat-Salé-Kénitra",
+    "Province": "Salé"
+  },
+  {
+    "DR": "DRR",
+    "Région": "Rabat-Salé-Kénitra",
+    "Province": "Sidi Kacem"
+  },
+  {
+    "DR": "DRR",
+    "Région": "Rabat-Salé-Kénitra",
+    "Province": "Sidi Slimane"
+  },
+  {
+    "DR": "DRR",
+    "Région": "Rabat-Salé-Kénitra",
+    "Province": "Skhirate- Témara"
+  },
+  {
+    "DR": "DRS",
+    "Région": "Béni Mellal-Khénifra",
+    "Province": "Azilal"
+  },
+  {
+    "DR": "DRS",
+    "Région": "Béni Mellal-Khénifra",
+    "Province": "Béni Mellal"
+  },
+  {
+    "DR": "DRS",
+    "Région": "Béni Mellal-Khénifra",
+    "Province": "Fquih Ben Salah"
+  },
+  {
+    "DR": "DRF",
+    "Région": "Béni Mellal-Khénifra",
+    "Province": "Khénifra"
+  },
+  {
+    "DR": "DRS",
+    "Région": "Béni Mellal-Khénifra",
+    "Province": "Khouribga"
+  },
+  {
+    "DR": "DRS",
+    "Région": "Grand Casablanca-Settat",
+    "Province": "Benslimane"
+  },
+  {
+    "DR": "DRS",
+    "Région": "Grand Casablanca-Settat",
+    "Province": "Berrechid"
+  },
+  {
+    "DR": "DRC",
+    "Région": "Grand Casablanca-Settat",
+    "Province": "Casablanca"
+  },
+  {
+    "DR": "DRS",
+    "Région": "Grand Casablanca-Settat",
+    "Province": "El Jadida"
+  },
+  {
+    "DR": "DRC",
+    "Région": "Grand Casablanca-Settat",
+    "Province": "Médiouna"
+  },
+  {
+    "DR": "DRC",
+    "Région": "Grand Casablanca-Settat",
+    "Province": "Mohammadia"
+  },
+  {
+    "DR": "DRC",
+    "Région": "Grand Casablanca-Settat",
+    "Province": "Nouaceur"
+  },
+  {
+    "DR": "DRS",
+    "Région": "Grand Casablanca-Settat",
+    "Province": "Settat"
+  },
+  {
+    "DR": "DRS",
+    "Région": "Grand Casablanca-Settat",
+    "Province": "Sidi Bennour"
+  },
+  {
+    "DR": "DRM",
+    "Région": "Marrakech-Safi",
+    "Province": "Al  Haouz"
+  },
+  {
+    "DR": "DRM",
+    "Région": "Marrakech-Safi",
+    "Province": "Chichaoua"
+  },
+  {
+    "DR": "DRM",
+    "Région": "Marrakech-Safi",
+    "Province": "El Kelâa des  Sraghna"
+  },
+  {
+    "DR": "DRM",
+    "Région": "Marrakech-Safi",
+    "Province": "Essaouira"
+  },
+  {
+    "DR": "DRM",
+    "Région": "Marrakech-Safi",
+    "Province": "Marrakech"
+  },
+  {
+    "DR": "DRM",
+    "Région": "Marrakech-Safi",
+    "Province": "Rehamna"
+  },
+  {
+    "DR": "DRM",
+    "Région": "Marrakech-Safi",
+    "Province": "Safi"
+  },
+  {
+    "DR": "DRM",
+    "Région": "Marrakech-Safi",
+    "Province": "Youssoufia"
+  },
+  {
+    "DR": "DRF",
+    "Région": "Drâa-Tafilalet",
+    "Province": "Errachidia"
+  },
+  {
+    "DR": "DRF",
+    "Région": "Drâa-Tafilalet",
+    "Province": "Midelt"
+  },
+  {
+    "DR": "DRM",
+    "Région": "Drâa-Tafilalet",
+    "Province": "Ouarzazate"
+  },
+  {
+    "DR": "DRM",
+    "Région": "Drâa-Tafilalet",
+    "Province": "Tinghir"
+  },
+  {
+    "DR": "DRM",
+    "Région": "Drâa-Tafilalet",
+    "Province": "Zagora"
+  },
+  {
+    "DR": "DRA",
+    "Région": "Souss-Massa",
+    "Province": "Agadir-Ida -Ou-Tanane"
+  },
+  {
+    "DR": "DRA",
+    "Région": "Souss-Massa",
+    "Province": "Chtouka- Ait Baha"
+  },
+  {
+    "DR": "DRA",
+    "Région": "Souss-Massa",
+    "Province": "Inezgane- Ait Melloul"
+  },
+  {
+    "DR": "DRA",
+    "Région": "Souss-Massa",
+    "Province": "Taroudannt"
+  },
+  {
+    "DR": "DRA",
+    "Région": "Souss-Massa",
+    "Province": "Tata"
+  },
+  {
+    "DR": "DRA",
+    "Région": "Souss-Massa",
+    "Province": "Tiznit"
+  },
+  {
+    "DR": "DRA",
+    "Région": "Guelmim-Oued Noun",
+    "Province": "Assa-Zag"
+  },
+  {
+    "DR": "DRA",
+    "Région": "Guelmim-Oued Noun",
+    "Province": "Guelmim"
+  },
+  {
+    "DR": "DRA",
+    "Région": "Guelmim-Oued Noun",
+    "Province": "Sidi Ifni"
+  },
+  {
+    "DR": "DRA",
+    "Région": "Guelmim-Oued Noun",
+    "Province": "Tan-Tan"
+  },
+  {
+    "DR": "DRA",
+    "Région": "Laayoune-Sakia El Hamra",
+    "Province": "Boujdour"
+  },
+  {
+    "DR": "DRA",
+    "Région": "Laayoune-Sakia El Hamra",
+    "Province": "Es-Semara"
+  },
+  {
+    "DR": "DRA",
+    "Région": "Laayoune-Sakia El Hamra",
+    "Province": "Laâyoune"
+  },
+  {
+    "DR": "DRA",
+    "Région": "Laayoune-Sakia El Hamra",
+    "Province": "Tarfaya"
+  },
+  {
+    "DR": "DRA",
+    "Région": "Eddakhla-Oued Eddahab",
+    "Province": "Aousserd"
+  },
+  {
+    "DR": "DRA",
+    "Région": "Eddakhla-Oued Eddahab",
+    "Province": "Oued Ed-Dahab"
+  }
+]

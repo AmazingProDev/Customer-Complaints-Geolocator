@@ -48,6 +48,7 @@
         <div class="nav-divider"></div>
 
         <button id="exportHierarchyBtn" class="btn secondary">Export Hierarchy</button>
+        <button id="exportDisplayedBtn" class="btn secondary" disabled>Export Displayed</button>
         <button id="exportBtn" class="btn secondary" disabled>Export Results</button>
       </div>
     </nav>
@@ -190,56 +191,6 @@
           </div>
         </div>
 
-        <div class="audit-grid" id="comparisonGrid" style="display: none;">
-          <div class="audit-card card">
-            <h2>Count Divergences</h2>
-            <p class="table-note" id="countDivergenceSummary">Original file vs calculated geography counts.</p>
-            <div class="table-scroll audit-scroll">
-              <table id="countDivergenceTable">
-                <thead>
-                  <tr>
-                    <th>Field</th>
-                    <th>Value</th>
-                    <th>Original Count</th>
-                    <th>Calculated Count</th>
-                    <th>Difference</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr class="empty-state">
-                    <td colspan="5">No divergence data yet. Import an Excel file to begin.</td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-          </div>
-
-          <div class="audit-card card">
-            <h2>Row Divergences</h2>
-            <p class="table-note" id="rowDivergenceSummary">Rows where the original file geography differs from the calculated geography.</p>
-            <div class="table-scroll audit-scroll">
-              <table id="rowDivergenceTable">
-                <thead>
-                  <tr>
-                    <th>Code</th>
-                    <th>Localité</th>
-                    <th>Field</th>
-                    <th>Original</th>
-                    <th>Calculated</th>
-                    <th>Nearest Place</th>
-                    <th>Inhabited Area</th>
-                    <th>Risk</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr class="empty-state">
-                    <td colspan="8">No divergence data yet. Import an Excel file to begin.</td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
       </section>
     </main>
   </div>
