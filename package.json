@@ -9,6 +9,7 @@
     "preview": "vite preview",
     "convert-data": "node scripts/convert_data.js",
     "convert-startup-data": "node scripts/convert_startup_data.js",
+    "convert-site-bdd": "node scripts/convert_site_bdd.js",
     "convert-lieux": "node scripts/convert_lieux_kml.js",
     "convert-zones-habitees": "node scripts/convert_zones_habitees_kml.js"
   },
