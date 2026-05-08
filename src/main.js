@@ -4,6 +4,108 @@ import * as turf from '@turf/turf';
 import 'leaflet-control-geocoder/dist/Control.Geocoder.css';
 import 'leaflet-control-geocoder';
 
+const SITE_BDD_CONFIG = {
+    '2G': {
+        label: 'BDD 2G',
+        siteField: 'BTSName',
+        sectorField: 'CELLNAME',
+        defaultColor: '#2b19ff',
+        defaultShowSiteNames: false,
+        defaultSettings: {
+            siteRadius: 6,
+            siteOpacity: 0.72,
+            sectorLengthKm: 0.07,
+            sectorHalfAngle: 18,
+            sectorOpacity: 1,
+            labelTextColor: '#ffffff',
+            labelBackgroundColor: '#2b19ff',
+            labelBackgroundOpacity: 0.88
+        }
+    },
+    '3G': {
+        label: 'BDD 3G',
+        siteField: 'NODEBName',
+        sectorField: 'CELLNAME',
+        defaultColor: '#00ff38',
+        defaultShowSiteNames: false,
+        defaultSettings: {
+            siteRadius: 8,
+            siteOpacity: 0.72,
+            sectorLengthKm: 0.08,
+            sectorHalfAngle: 18,
+            sectorOpacity: 0.95,
+            labelTextColor: '#020617',
+            labelBackgroundColor: '#f6f3ef',
+            labelBackgroundOpacity: 0.92
+        }
+    },
+    '4G': {
+        label: 'BDD 4G',
+        siteField: 'BaseStationName',
+        sectorField: 'CellName',
+        defaultColor: '#ff3b6b',
+        defaultShowSiteNames: true,
+        defaultSettings: {
+            siteRadius: 10,
+            siteOpacity: 0.72,
+            sectorLengthKm: 0.09,
+            sectorHalfAngle: 18,
+            sectorOpacity: 1,
+            labelTextColor: '#ffffff',
+            labelBackgroundColor: '#111111',
+            labelBackgroundOpacity: 0.35
+        }
+    }
+};
+
+const NETWORK_BADGE_OPTIONS = Object.freeze(['2G', '2G/3G', '2G/3G/4G', '2G/3G/4G/5G', 'NC']);
+
+function createEmptySiteBddDataset(tech) {
+    const config = SITE_BDD_CONFIG[tech];
+    return {
+        tech,
+        label: config.label,
+        color: config.defaultColor,
+        visible: false,
+        settingsOpen: false,
+        showSiteNames: Boolean(config.defaultShowSiteNames),
+        settings: createDefaultSiteBddRenderSettings(tech),
+        sites: [],
+        sectors: [],
+        siteGrid: new Map(),
+        sectorGrid: new Map()
+    };
+}
+
+const SITE_BDD_DEFAULT_SETTINGS = Object.freeze({
+    siteRadius: 4,
+    siteOpacity: 0.72,
+    sectorLengthKm: 0.8,
+    sectorHalfAngle: 18,
+    sectorOpacity: 0.2,
+    labelTextColor: '#ffffff',
+    labelBackgroundColor: '#020617',
+    labelBackgroundOpacity: 0.82
+});
+const SITE_BDD_TECH_ORDER = Object.freeze(['2G', '3G', '4G']);
+const CUSTOM_SITE_OVERLAY_COLORS = Object.freeze([
+    '#f97316',
+    '#22c55e',
+    '#38bdf8',
+    '#facc15',
+    '#e879f9',
+    '#fb7185'
+]);
+const DEFAULT_SITE_BDD_DATA_URL = '/data/site_bdd_builtin.json';
+
+function createDefaultSiteBddRenderSettings(tech) {
+    const techDefaults = tech ? SITE_BDD_CONFIG[tech]?.defaultSettings : null;
+    return {
+        ...SITE_BDD_DEFAULT_SETTINGS,
+        ...(techDefaults || {})
+    };
+}
+
 // --- State ---
 const state = {
     layers: {
@@ -34,12 +136,49 @@ const state = {
         provinces: L.layerGroup(),
         communes: L.layerGroup(),
         points: L.layerGroup(),
-        focus: L.layerGroup()
+        focus: L.layerGroup(),
+        manualSites: L.layerGroup(),
+        ruler: L.layerGroup(),
+        rulerHandles: L.layerGroup(),
+        textAnnotations: L.layerGroup(),
+        drawings: L.layerGroup(),
+        drawingHandles: L.layerGroup(),
+        customSiteOverlays: L.layerGroup(),
+        siteBdds: {
+            '2G': L.layerGroup(),
+            '3G': L.layerGroup(),
+            '4G': L.layerGroup()
+        }
     },
     points: [], // Array of { id, lat, lng, properties... }
     processedPoints: [], // Array of { ...original, region, province, commune }
     importSummary: null,
     filteredPoints: [],
+    manualSites: [],
+    draw: {
+        mode: null,
+        selectedId: null,
+        activeDraft: null,
+        annotations: [],
+        defaultStyle: {
+            color: '#22c55e',
+            width: 4,
+            opacity: 0.95,
+            fillOpacity: 0.2,
+            dashed: false
+        }
+    },
+    ruler: {
+        active: false,
+        currentPoints: [],
+        measurements: [],
+        selectedId: null
+    },
+    textAnnotations: [],
+    textTool: {
+        placing: false,
+        selectedId: null
+    },
     auditFilter: null,
     searchCircle: null,
     activePointId: null,
@@ -47,6 +186,9 @@ const state = {
     wikimapiaCache: new Map(),
     localityReferenceOverrides: new Map(),
     geoDataLoaded: false,
+    siteBdd: createEmptySiteBddState(),
+    customSiteOverlays: [],
+    visibleNetworkBadges: new Set(NETWORK_BADGE_OPTIONS),
     comparisonReport: {
         countDifferences: [],
         rowDivergences: []
@@ -59,6 +201,9 @@ const PLACE_GRID_SEARCH_RADIUS = 4;
 const HIGH_RISK_THRESHOLD = 60;
 const SEARCH_DEBOUNCE_MS = 250;
 const SPATIAL_INDEX_CELL_SIZE = 0.5;
+const SITE_BDD_GRID_CELL_SIZE = 0.25;
+const SITE_BDD_SECTOR_MIN_ZOOM = 10;
+const SITE_BDD_SECTOR_RENDER_LIMIT = 6000;
 const WIKIMAPIA_RESULT_LIMIT = 5;
 let markerRenderFrame = null;
 let searchInputTimer = null;
@@ -67,6 +212,15 @@ let coordinateNormalizerModulePromise = null;
 let analysisWorker = null;
 let analysisWorkerInitPromise = null;
 let analysisRequestCounter = 0;
+let badgePopoverDragState = null;
+let badgePopoverPosition = null;
+let textPopoverDragState = null;
+let textPopoverPosition = null;
+let drawPopoverDragState = null;
+let drawPopoverPosition = null;
+let legendDragState = null;
+let legendPosition = null;
+const siteBddCanvasRenderer = L.canvas({ padding: 0.4 });
 
 function loadXlsxModule() {
     if (!xlsxModulePromise) {
@@ -202,13 +356,55 @@ state.mapLayerGroups.provinces.addTo(map);
 state.mapLayerGroups.communes.addTo(map);
 state.mapLayerGroups.points.addTo(map);
 state.mapLayerGroups.focus.addTo(map);
+state.mapLayerGroups.manualSites.addTo(map);
+state.mapLayerGroups.ruler.addTo(map);
+state.mapLayerGroups.rulerHandles.addTo(map);
+state.mapLayerGroups.textAnnotations.addTo(map);
+state.mapLayerGroups.drawings.addTo(map);
+state.mapLayerGroups.drawingHandles.addTo(map);
+state.mapLayerGroups.customSiteOverlays.addTo(map);
+Object.values(state.mapLayerGroups.siteBdds).forEach((group) => group.addTo(map));
 
 // --- DOM Elements ---
 const dropZone = document.getElementById('dropZone');
 const fileInput = document.getElementById('fileInput');
+const importSitesBtn = document.getElementById('importSitesBtn');
+const clearSitesBtn = document.getElementById('clearSitesBtn');
+const clearSitesBtnCompact = document.getElementById('clearSitesBtnCompact');
+const sitesFileInput = document.getElementById('sitesFileInput');
+const importKmlSitesBtn = document.getElementById('importKmlSitesBtn');
+const clearKmlSitesBtn = document.getElementById('clearKmlSitesBtn');
+const clearKmlSitesBtnCompact = document.getElementById('clearKmlSitesBtnCompact');
+const kmlSitesFileInput = document.getElementById('kmlSitesFileInput');
+const kmlSitesSummaryText = document.getElementById('kmlSitesSummaryText');
+const kmlSiteOverlayList = document.getElementById('kmlSiteOverlayList');
+const bddLayerGrid = document.getElementById('bddLayerGrid');
+const toggleBadgesBtn = document.getElementById('toggleBadgesBtn');
+const badgeFilterPopover = document.getElementById('badgeFilterPopover');
+const badgeFilterPopoverHeader = document.getElementById('badgeFilterPopoverHeader');
 const statusBox = document.getElementById('statusBox');
 const statusText = document.getElementById('statusText');
 const importSummaryText = document.getElementById('importSummaryText');
+const sitesImportSummaryText = document.getElementById('sitesImportSummaryText');
+const sitesRenderHint = document.getElementById('sitesRenderHint');
+const siteBddLegendName = document.getElementById('siteBddLegendName');
+const bddModeSites = document.getElementById('bddModeSites');
+const bddModeSectors = document.getElementById('bddModeSectors');
+const globalSectorLengthScaleInput = document.getElementById('globalSectorLengthScaleInput');
+const globalSectorLengthScaleValue = document.getElementById('globalSectorLengthScaleValue');
+const toggleOverlayLayersBtn = document.getElementById('toggleOverlayLayersBtn');
+const overlayLayersContent = document.getElementById('overlayLayersContent');
+const toggleImportedOverlaysBtn = document.getElementById('toggleImportedOverlaysBtn');
+const importedOverlaysContent = document.getElementById('importedOverlaysContent');
+const toggleBdd2G = document.getElementById('toggleBdd2G');
+const toggleBdd3G = document.getElementById('toggleBdd3G');
+const toggleBdd4G = document.getElementById('toggleBdd4G');
+const colorBdd2G = document.getElementById('colorBdd2G');
+const colorBdd3G = document.getElementById('colorBdd3G');
+const colorBdd4G = document.getElementById('colorBdd4G');
+const countBdd2G = document.getElementById('countBdd2G');
+const countBdd3G = document.getElementById('countBdd3G');
+const countBdd4G = document.getElementById('countBdd4G');
 const toggleRegions = document.getElementById('toggleRegions');
 const toggleDRs = document.getElementById('toggleDRs');
 const toggleProvinces = document.getElementById('toggleProvinces');
@@ -224,9 +420,14 @@ const drLegend = document.getElementById('drLegend');
 const matchedPointsEl = document.getElementById('matchedPoints');
 const emptySSPointsEl = document.getElementById('emptySSPoints');
 const filtersCard = document.getElementById('filtersCard');
+const toggleHierarchyLayersBtn = document.getElementById('toggleHierarchyLayersBtn');
+const hierarchyLayersContent = document.getElementById('hierarchyLayersContent');
+const toggleFiltersBtn = document.getElementById('toggleFiltersBtn');
+const filtersContent = document.getElementById('filtersContent');
 const filterEmptySS = document.getElementById('filterEmptySS');
 const filterGeographyDivergence = document.getElementById('filterGeographyDivergence');
 const filterHighRisk = document.getElementById('filterHighRisk');
+const filterFocusCircles = document.getElementById('filterFocusCircles');
 const auditFilterBar = document.getElementById('auditFilterBar');
 const auditFilterLabel = document.getElementById('auditFilterLabel');
 const clearAuditFilterBtn = document.getElementById('clearAuditFilterBtn');
@@ -238,6 +439,49 @@ const siteSearchInput = document.getElementById('siteSearchInput');
 const siteSearchBtn = document.getElementById('siteSearchBtn');
 const clearSearchBtn = document.getElementById('clearSearchBtn');
 const searchResultsDropdown = document.getElementById('searchResultsDropdown');
+const toggleImportMenuBtn = document.getElementById('toggleImportMenuBtn');
+const importMenuPopover = document.getElementById('importMenuPopover');
+const importDataMenuBtn = document.getElementById('importDataMenuBtn');
+const importSitesMenuBtn = document.getElementById('importSitesMenuBtn');
+const importKmlMenuBtn = document.getElementById('importKmlMenuBtn');
+const badgeFilter2G = document.getElementById('badgeFilter2G');
+const badgeFilter2G3G = document.getElementById('badgeFilter2G3G');
+const badgeFilter2G3G4G = document.getElementById('badgeFilter2G3G4G');
+const badgeFilter2G3G4G5G = document.getElementById('badgeFilter2G3G4G5G');
+const badgeFilterNC = document.getElementById('badgeFilterNC');
+const toggleRulerBtn = document.getElementById('toggleRulerBtn');
+const clearRulerBtn = document.getElementById('clearRulerBtn');
+const toggleDrawToolBtn = document.getElementById('toggleDrawToolBtn');
+const drawToolPopover = document.getElementById('drawToolPopover');
+const drawToolPopoverHeader = document.getElementById('drawToolPopoverHeader');
+const drawModeDotBtn = document.getElementById('drawModeDotBtn');
+const drawModeLineBtn = document.getElementById('drawModeLineBtn');
+const drawModeArrowBtn = document.getElementById('drawModeArrowBtn');
+const drawModeRectangleBtn = document.getElementById('drawModeRectangleBtn');
+const drawModeCircleBtn = document.getElementById('drawModeCircleBtn');
+const drawStrokeColor = document.getElementById('drawStrokeColor');
+const drawStrokeWidth = document.getElementById('drawStrokeWidth');
+const drawStrokeOpacity = document.getElementById('drawStrokeOpacity');
+const drawFillOpacity = document.getElementById('drawFillOpacity');
+const drawDashedStroke = document.getElementById('drawDashedStroke');
+const drawToolHint = document.getElementById('drawToolHint');
+const stopDrawingBtn = document.getElementById('stopDrawingBtn');
+const removeSelectedDrawingBtn = document.getElementById('removeSelectedDrawingBtn');
+const clearDrawingsBtn = document.getElementById('clearDrawingsBtn');
+const toggleTextToolBtn = document.getElementById('toggleTextToolBtn');
+const textToolPopover = document.getElementById('textToolPopover');
+const textToolPopoverHeader = document.getElementById('textToolPopoverHeader');
+const textAnnotationInput = document.getElementById('textAnnotationInput');
+const textAnnotationFont = document.getElementById('textAnnotationFont');
+const textAnnotationSize = document.getElementById('textAnnotationSize');
+const textAnnotationColor = document.getElementById('textAnnotationColor');
+const textAnnotationOpacity = document.getElementById('textAnnotationOpacity');
+const textAnnotationUseBackground = document.getElementById('textAnnotationUseBackground');
+const textAnnotationBgColor = document.getElementById('textAnnotationBgColor');
+const textAnnotationBgOpacity = document.getElementById('textAnnotationBgOpacity');
+const placeTextAnnotationBtn = document.getElementById('placeTextAnnotationBtn');
+const removeTextAnnotationBtn = document.getElementById('removeTextAnnotationBtn');
+const clearTextAnnotationsBtn = document.getElementById('clearTextAnnotationsBtn');
 const wikimapiaApiKeyInput = document.getElementById('wikimapiaApiKeyInput');
 const saveWikimapiaKeyBtn = document.getElementById('saveWikimapiaKeyBtn');
 const clearWikimapiaKeyBtn = document.getElementById('clearWikimapiaKeyBtn');
@@ -248,6 +492,92 @@ const manualSiteName = document.getElementById('manualSiteName');
 const manualLat = document.getElementById('manualLat');
 const manualLng = document.getElementById('manualLng');
 const addSiteBtn = document.getElementById('addSiteBtn');
+
+const siteBddControls = {
+    '2G': {
+        row: document.getElementById('rowBdd2G'),
+        toggle: toggleBdd2G,
+        moveUp: document.getElementById('moveUpBdd2G'),
+        moveDown: document.getElementById('moveDownBdd2G'),
+        settingsToggle: document.getElementById('toggleSettingsBdd2G'),
+        settingsPanel: document.getElementById('controlsBdd2G'),
+        color: colorBdd2G,
+        count: countBdd2G,
+        showNames: document.getElementById('showNamesBdd2G'),
+        siteSizeInput: document.getElementById('siteSizeInputBdd2G'),
+        siteSizeValue: document.getElementById('siteSizeValueBdd2G'),
+        siteOpacityInput: document.getElementById('siteOpacityInputBdd2G'),
+        siteOpacityValue: document.getElementById('siteOpacityValueBdd2G'),
+        sectorLengthInput: document.getElementById('sectorLengthInputBdd2G'),
+        sectorLengthValue: document.getElementById('sectorLengthValueBdd2G'),
+        sectorWidthInput: document.getElementById('sectorWidthInputBdd2G'),
+        sectorWidthValue: document.getElementById('sectorWidthValueBdd2G'),
+        sectorOpacityInput: document.getElementById('sectorOpacityInputBdd2G'),
+        sectorOpacityValue: document.getElementById('sectorOpacityValueBdd2G'),
+        labelTextColorInput: document.getElementById('labelTextColorBdd2G'),
+        labelBackgroundColorInput: document.getElementById('labelBackgroundColorBdd2G'),
+        labelBackgroundOpacityInput: document.getElementById('labelBackgroundOpacityInputBdd2G'),
+        labelBackgroundOpacityValue: document.getElementById('labelBackgroundOpacityValueBdd2G')
+    },
+    '3G': {
+        row: document.getElementById('rowBdd3G'),
+        toggle: toggleBdd3G,
+        moveUp: document.getElementById('moveUpBdd3G'),
+        moveDown: document.getElementById('moveDownBdd3G'),
+        settingsToggle: document.getElementById('toggleSettingsBdd3G'),
+        settingsPanel: document.getElementById('controlsBdd3G'),
+        color: colorBdd3G,
+        count: countBdd3G,
+        showNames: document.getElementById('showNamesBdd3G'),
+        siteSizeInput: document.getElementById('siteSizeInputBdd3G'),
+        siteSizeValue: document.getElementById('siteSizeValueBdd3G'),
+        siteOpacityInput: document.getElementById('siteOpacityInputBdd3G'),
+        siteOpacityValue: document.getElementById('siteOpacityValueBdd3G'),
+        sectorLengthInput: document.getElementById('sectorLengthInputBdd3G'),
+        sectorLengthValue: document.getElementById('sectorLengthValueBdd3G'),
+        sectorWidthInput: document.getElementById('sectorWidthInputBdd3G'),
+        sectorWidthValue: document.getElementById('sectorWidthValueBdd3G'),
+        sectorOpacityInput: document.getElementById('sectorOpacityInputBdd3G'),
+        sectorOpacityValue: document.getElementById('sectorOpacityValueBdd3G'),
+        labelTextColorInput: document.getElementById('labelTextColorBdd3G'),
+        labelBackgroundColorInput: document.getElementById('labelBackgroundColorBdd3G'),
+        labelBackgroundOpacityInput: document.getElementById('labelBackgroundOpacityInputBdd3G'),
+        labelBackgroundOpacityValue: document.getElementById('labelBackgroundOpacityValueBdd3G')
+    },
+    '4G': {
+        row: document.getElementById('rowBdd4G'),
+        toggle: toggleBdd4G,
+        moveUp: document.getElementById('moveUpBdd4G'),
+        moveDown: document.getElementById('moveDownBdd4G'),
+        settingsToggle: document.getElementById('toggleSettingsBdd4G'),
+        settingsPanel: document.getElementById('controlsBdd4G'),
+        color: colorBdd4G,
+        count: countBdd4G,
+        showNames: document.getElementById('showNamesBdd4G'),
+        siteSizeInput: document.getElementById('siteSizeInputBdd4G'),
+        siteSizeValue: document.getElementById('siteSizeValueBdd4G'),
+        siteOpacityInput: document.getElementById('siteOpacityInputBdd4G'),
+        siteOpacityValue: document.getElementById('siteOpacityValueBdd4G'),
+        sectorLengthInput: document.getElementById('sectorLengthInputBdd4G'),
+        sectorLengthValue: document.getElementById('sectorLengthValueBdd4G'),
+        sectorWidthInput: document.getElementById('sectorWidthInputBdd4G'),
+        sectorWidthValue: document.getElementById('sectorWidthValueBdd4G'),
+        sectorOpacityInput: document.getElementById('sectorOpacityInputBdd4G'),
+        sectorOpacityValue: document.getElementById('sectorOpacityValueBdd4G'),
+        labelTextColorInput: document.getElementById('labelTextColorBdd4G'),
+        labelBackgroundColorInput: document.getElementById('labelBackgroundColorBdd4G'),
+        labelBackgroundOpacityInput: document.getElementById('labelBackgroundOpacityInputBdd4G'),
+        labelBackgroundOpacityValue: document.getElementById('labelBackgroundOpacityValueBdd4G')
+    }
+};
+
+const networkBadgeControls = {
+    '2G': badgeFilter2G,
+    '2G/3G': badgeFilter2G3G,
+    '2G/3G/4G': badgeFilter2G3G4G,
+    '2G/3G/4G/5G': badgeFilter2G3G4G5G,
+    NC: badgeFilterNC
+};
 
 
 // --- Load Data ---
@@ -434,6 +764,7 @@ async function loadGeoData() {
         updateMapVisibility('province');
         updateMapVisibility('commune');
         state.geoDataLoaded = true;
+        await loadBuiltInSiteBddData();
 
         // updateLegend(); // Handled by toggles? No, remove updateLegend call since toggles are removed or different
     } catch (err) {
@@ -473,6 +804,92 @@ fileInput.addEventListener('change', (e) => {
     const file = e.target.files[0];
     if (file) processExcel(file);
 });
+
+toggleImportMenuBtn?.addEventListener('click', (event) => {
+    event.stopPropagation();
+    if (!importMenuPopover) return;
+    if (importMenuPopover.hasAttribute('hidden')) {
+        openImportMenuPopover();
+    } else {
+        closeImportMenuPopover();
+    }
+});
+
+importMenuPopover?.addEventListener('click', (event) => {
+    event.stopPropagation();
+});
+
+importDataMenuBtn?.addEventListener('click', () => {
+    fileInput?.click();
+    closeImportMenuPopover();
+});
+
+importSitesMenuBtn?.addEventListener('click', () => {
+    sitesFileInput?.click();
+    closeImportMenuPopover();
+});
+
+importKmlMenuBtn?.addEventListener('click', () => {
+    kmlSitesFileInput?.click();
+    closeImportMenuPopover();
+});
+
+if (importSitesBtn) {
+    importSitesBtn.addEventListener('click', () => {
+        sitesFileInput?.click();
+    });
+}
+
+if (sitesFileInput) {
+    sitesFileInput.addEventListener('change', (e) => {
+        const file = e.target.files[0];
+        if (file) {
+            processSitesWorkbook(file);
+        }
+        e.target.value = '';
+    });
+}
+
+if (clearSitesBtn) {
+    clearSitesBtn.addEventListener('click', () => {
+        resetSiteBddState();
+    });
+}
+
+clearSitesBtnCompact?.addEventListener('click', () => {
+    resetSiteBddState();
+});
+
+if (importKmlSitesBtn) {
+    importKmlSitesBtn.addEventListener('click', () => {
+        kmlSitesFileInput?.click();
+    });
+}
+
+if (kmlSitesFileInput) {
+    kmlSitesFileInput.addEventListener('change', (event) => {
+        const files = event.target.files;
+        if (files?.length) {
+            processKmlSiteFiles(files);
+        }
+        event.target.value = '';
+    });
+}
+
+if (clearKmlSitesBtn) {
+    clearKmlSitesBtn.addEventListener('click', () => {
+        resetCustomSiteOverlays();
+    });
+}
+
+clearKmlSitesBtnCompact?.addEventListener('click', () => {
+    resetCustomSiteOverlays();
+});
+
+bindSectionCollapse(toggleOverlayLayersBtn, overlayLayersContent, false);
+bindSectionCollapse(toggleImportedOverlaysBtn, importedOverlaysContent, false);
+bindSectionCollapse(toggleHierarchyLayersBtn, hierarchyLayersContent, false);
+bindSectionCollapse(toggleFiltersBtn, filtersContent, false);
 
 async function processExcel(file) {
     if (!areGeoLayersReady()) {
@@ -537,6 +954,23 @@ function escapeHtml(value) {
         .replace(/>/g, '&gt;')
         .replace(/"/g, '&quot;')
         .replace(/'/g, '&#39;');
+}
+
+function hexToRgba(hex, alpha = 1) {
+    const sanitized = String(hex || '').replace('#', '');
+    const normalized = sanitized.length === 3
+        ? sanitized.split('').map((char) => char + char).join('')
+        : sanitized;
+
+    const red = parseInt(normalized.slice(0, 2), 16);
+    const green = parseInt(normalized.slice(2, 4), 16);
+    const blue = parseInt(normalized.slice(4, 6), 16);
+
+    if ([red, green, blue].some((channel) => Number.isNaN(channel))) {
+        return `rgba(239, 68, 68, ${alpha})`;
+    }
+
+    return `rgba(${red}, ${green}, ${blue}, ${alpha})`;
 }
 
 function appendCell(row, value, { className = '', title = '', colSpan = 1 } = {}) {
@@ -608,6 +1042,997 @@ function buildSpatialFeatureIndex(features, cellSize = SPATIAL_INDEX_CELL_SIZE) 
         cellSize,
         buckets
     };
+}
+
+function createEmptySiteBddState() {
+    return {
+        imported: false,
+        fileName: '',
+        legendName: 'Sites IAM',
+        globalSectorLengthScale: 100,
+        mode: 'sites',
+        bounds: null,
+        layerOrder: [...SITE_BDD_TECH_ORDER],
+        datasets: {
+            '2G': createEmptySiteBddDataset('2G'),
+            '3G': createEmptySiteBddDataset('3G'),
+            '4G': createEmptySiteBddDataset('4G')
+        }
+    };
+}
+
+function createCustomSiteOverlay(fileName, points, index = state.customSiteOverlays.length) {
+    const color = CUSTOM_SITE_OVERLAY_COLORS[index % CUSTOM_SITE_OVERLAY_COLORS.length];
+    const label = fileName.replace(/\.(kml|kmz)$/i, '');
+    return {
+        id: `kml-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 8)}`,
+        fileName,
+        label,
+        legendName: label,
+        visible: true,
+        settingsOpen: false,
+        showSiteNames: false,
+        color,
+        settings: {
+            siteRadius: 7,
+            siteOpacity: 0.8
+        },
+        points,
+        pointGrid: buildSiteBddGrid(points)
+    };
+}
+
+function formatSiteBddSettingValue(key, value) {
+    switch (key) {
+        case 'siteRadius':
+            return `${Math.round(value)} px`;
+        case 'siteOpacity':
+        case 'sectorOpacity':
+            return `${Math.round(value * 100)}%`;
+        case 'sectorLengthKm':
+            return `${Math.round(value * 1000)} m`;
+        case 'sectorHalfAngle':
+            return `${Math.round(value * 2)}°`;
+        case 'labelBackgroundOpacity':
+            return `${Math.round(value * 100)}%`;
+        default:
+            return String(value);
+    }
+}
+
+function updateSiteBddRenderControlLabels(tech, settings = state.siteBdd.datasets[tech]?.settings) {
+    const controls = siteBddControls[tech];
+    if (!controls || !settings) return;
+
+    if (controls.siteSizeValue) {
+        controls.siteSizeValue.textContent = formatSiteBddSettingValue('siteRadius', settings.siteRadius);
+    }
+    if (controls.siteOpacityValue) {
+        controls.siteOpacityValue.textContent = formatSiteBddSettingValue('siteOpacity', settings.siteOpacity);
+    }
+    if (controls.sectorLengthValue) {
+        controls.sectorLengthValue.textContent = formatSiteBddSettingValue('sectorLengthKm', settings.sectorLengthKm);
+    }
+    if (controls.sectorWidthValue) {
+        controls.sectorWidthValue.textContent = formatSiteBddSettingValue('sectorHalfAngle', settings.sectorHalfAngle);
+    }
+    if (controls.sectorOpacityValue) {
+        controls.sectorOpacityValue.textContent = formatSiteBddSettingValue('sectorOpacity', settings.sectorOpacity);
+    }
+    if (controls.labelBackgroundOpacityValue) {
+        controls.labelBackgroundOpacityValue.textContent = formatSiteBddSettingValue('labelBackgroundOpacity', settings.labelBackgroundOpacity);
+    }
+}
+
+function updateGlobalSectorLengthControl() {
+    if (globalSectorLengthScaleInput) {
+        globalSectorLengthScaleInput.value = String(state.siteBdd.globalSectorLengthScale || 100);
+    }
+    if (globalSectorLengthScaleValue) {
+        globalSectorLengthScaleValue.textContent = `${Math.round(state.siteBdd.globalSectorLengthScale || 100)}%`;
+    }
+}
+
+function applyGlobalSectorLengthScale(nextScale) {
+    const previousScale = state.siteBdd.globalSectorLengthScale || 100;
+    const safeNextScale = Math.max(10, Math.min(300, Number(nextScale) || 100));
+    const ratio = safeNextScale / previousScale;
+
+    Object.values(state.siteBdd.datasets).forEach((dataset) => {
+        const nextLengthKm = dataset.settings.sectorLengthKm * ratio;
+        dataset.settings.sectorLengthKm = Math.max(0.01, Math.min(3, roundTo(nextLengthKm, 3)));
+    });
+
+    state.siteBdd.globalSectorLengthScale = safeNextScale;
+}
+
+function getSiteBddRenderOrder() {
+    const order = state.siteBdd.layerOrder || SITE_BDD_TECH_ORDER;
+    return order.filter((tech) => state.siteBdd.datasets[tech]);
+}
+
+function moveSiteBddLayer(tech, direction) {
+    const order = [...getSiteBddRenderOrder()];
+    const currentIndex = order.indexOf(tech);
+    if (currentIndex === -1) return;
+
+    const nextIndex = currentIndex + direction;
+    if (nextIndex < 0 || nextIndex >= order.length) return;
+
+    [order[currentIndex], order[nextIndex]] = [order[nextIndex], order[currentIndex]];
+    state.siteBdd.layerOrder = order;
+    updateSiteBddControls();
+    renderSiteBddLayers();
+}
+
+function getSiteBddGridKey(lng, lat, cellSize = SITE_BDD_GRID_CELL_SIZE) {
+    const x = Math.floor(lng / cellSize);
+    const y = Math.floor(lat / cellSize);
+    return `${x}:${y}`;
+}
+
+function buildSiteBddGrid(items, cellSize = SITE_BDD_GRID_CELL_SIZE) {
+    const grid = new Map();
+    items.forEach((item) => {
+        const key = getSiteBddGridKey(item.lng, item.lat, cellSize);
+        if (!grid.has(key)) {
+            grid.set(key, []);
+        }
+        grid.get(key).push(item);
+    });
+    return grid;
+}
+
+function buildSiteBddStateFromPayload(payload, options = {}) {
+    const nextState = createEmptySiteBddState();
+    const previousState = options.preserveStateFrom || state.siteBdd;
+    nextState.legendName = previousState.legendName || 'Sites IAM';
+    nextState.globalSectorLengthScale = previousState.globalSectorLengthScale || 100;
+    nextState.mode = previousState.mode;
+    nextState.layerOrder = [...(previousState.layerOrder || SITE_BDD_TECH_ORDER)];
+    const bounds = L.latLngBounds([]);
+
+    Object.entries(SITE_BDD_CONFIG).forEach(([tech]) => {
+        const previousDataset = previousState.datasets[tech];
+        const incomingDataset = payload?.datasets?.[tech] || {};
+        const sites = Array.isArray(incomingDataset.sites) ? incomingDataset.sites : [];
+        const sectors = Array.isArray(incomingDataset.sectors) ? incomingDataset.sectors : [];
+
+        nextState.datasets[tech].color = previousDataset.color;
+        nextState.datasets[tech].visible = previousDataset.visible;
+        nextState.datasets[tech].settingsOpen = previousDataset.settingsOpen;
+        nextState.datasets[tech].showSiteNames = previousDataset.showSiteNames;
+        nextState.datasets[tech].settings = { ...previousDataset.settings };
+        nextState.datasets[tech].sites = sites;
+        nextState.datasets[tech].sectors = sectors;
+        nextState.datasets[tech].siteGrid = buildSiteBddGrid(sites);
+        nextState.datasets[tech].sectorGrid = buildSiteBddGrid(sectors);
+
+        sites.forEach((site) => {
+            if (Number.isFinite(site.lat) && Number.isFinite(site.lng)) {
+                bounds.extend([site.lat, site.lng]);
+            }
+        });
+    });
+
+    nextState.imported = true;
+    nextState.fileName = payload?.fileName || options.fileName || 'Built-in Sites BDD';
+    nextState.bounds = bounds.isValid() ? bounds : null;
+    return nextState;
+}
+
+function getSiteBddSummaryParts(siteBddState = state.siteBdd) {
+    return Object.keys(SITE_BDD_CONFIG).map((tech) => {
+        const dataset = siteBddState.datasets[tech];
+        return `${tech}: ${dataset.sites.length.toLocaleString()} sites / ${dataset.sectors.length.toLocaleString()} sectors`;
+    });
+}
+
+function updateSiteBddSummaryText(message) {
+    if (sitesImportSummaryText) {
+        sitesImportSummaryText.textContent = message;
+    }
+}
+
+function createSiteBddPayloadFromWorkbook(XLSX, workbook, fileName = '') {
+    const payload = {
+        fileName,
+        generatedAt: new Date().toISOString(),
+        datasets: {}
+    };
+
+    Object.entries(SITE_BDD_CONFIG).forEach(([tech, config]) => {
+        const sheet = workbook.Sheets[tech];
+        const dataset = {
+            sites: [],
+            sectors: []
+        };
+
+        if (!sheet) {
+            payload.datasets[tech] = dataset;
+            return;
+        }
+
+        const rows = XLSX.utils.sheet_to_json(sheet, { defval: null, raw: true });
+        const siteMap = new Map();
+        const sectors = [];
+
+        rows.forEach((row, index) => {
+            const lat = Number(row.Latitude);
+            const lng = Number(row.Longitude);
+            if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+                return;
+            }
+
+            const siteName = String(row[config.siteField] || row[config.sectorField] || `${tech} Site ${index + 1}`).trim();
+            const sectorName = String(row[config.sectorField] || siteName).trim();
+            const azimuth = Number(row.Azimut);
+            const siteKey = `${siteName}|${roundTo(lat, 6)}|${roundTo(lng, 6)}`;
+
+            if (!siteMap.has(siteKey)) {
+                siteMap.set(siteKey, {
+                    siteName,
+                    lat,
+                    lng,
+                    sectorCount: 0
+                });
+            }
+
+            siteMap.get(siteKey).sectorCount += 1;
+            sectors.push({
+                id: `${tech}-${index + 1}`,
+                tech,
+                siteName,
+                sectorName,
+                lat,
+                lng,
+                azimuth
+            });
+        });
+
+        dataset.sites = [...siteMap.values()];
+        dataset.sectors = sectors;
+        payload.datasets[tech] = dataset;
+    });
+
+    return payload;
+}
+
+function collectSiteBddItemsInBounds(grid, bounds, cellSize = SITE_BDD_GRID_CELL_SIZE) {
+    if (!grid || !bounds) return [];
+
+    const items = [];
+    const west = bounds.getWest();
+    const east = bounds.getEast();
+    const south = bounds.getSouth();
+    const north = bounds.getNorth();
+    const startX = Math.floor(west / cellSize);
+    const endX = Math.floor(east / cellSize);
+    const startY = Math.floor(south / cellSize);
+    const endY = Math.floor(north / cellSize);
+
+    for (let x = startX; x <= endX; x += 1) {
+        for (let y = startY; y <= endY; y += 1) {
+            const bucket = grid.get(`${x}:${y}`);
+            if (bucket) {
+                items.push(...bucket);
+            }
+        }
+    }
+
+    return items;
+}
+
+async function inflateZipEntry(compressedBytes, compressionMethod) {
+    if (compressionMethod === 0) {
+        return compressedBytes;
+    }
+
+    if (compressionMethod !== 8) {
+        throw new Error(`Unsupported KMZ compression method: ${compressionMethod}`);
+    }
+
+    if (typeof DecompressionStream === 'undefined') {
+        throw new Error('This browser does not support KMZ decompression.');
+    }
+
+    const stream = new Blob([compressedBytes]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
+    const inflatedBuffer = await new Response(stream).arrayBuffer();
+    return new Uint8Array(inflatedBuffer);
+}
+
+async function extractKmlTextFromKmz(file) {
+    const arrayBuffer = await file.arrayBuffer();
+    const view = new DataView(arrayBuffer);
+    const bytes = new Uint8Array(arrayBuffer);
+    const endSignature = 0x06054b50;
+    let endOffset = -1;
+
+    for (let offset = bytes.length - 22; offset >= 0; offset -= 1) {
+        if (view.getUint32(offset, true) === endSignature) {
+            endOffset = offset;
+            break;
+        }
+    }
+
+    if (endOffset === -1) {
+        throw new Error('Invalid KMZ: central directory not found.');
+    }
+
+    const entryCount = view.getUint16(endOffset + 10, true);
+    const centralDirectoryOffset = view.getUint32(endOffset + 16, true);
+    let offset = centralDirectoryOffset;
+    const centralSignature = 0x02014b50;
+    const localSignature = 0x04034b50;
+    const decoder = new TextDecoder('utf-8');
+
+    for (let index = 0; index < entryCount; index += 1) {
+        if (view.getUint32(offset, true) !== centralSignature) {
+            throw new Error('Invalid KMZ: malformed central directory entry.');
+        }
+
+        const compressionMethod = view.getUint16(offset + 10, true);
+        const compressedSize = view.getUint32(offset + 20, true);
+        const fileNameLength = view.getUint16(offset + 28, true);
+        const extraLength = view.getUint16(offset + 30, true);
+        const commentLength = view.getUint16(offset + 32, true);
+        const localHeaderOffset = view.getUint32(offset + 42, true);
+        const entryName = decoder.decode(bytes.slice(offset + 46, offset + 46 + fileNameLength));
+
+        offset += 46 + fileNameLength + extraLength + commentLength;
+
+        if (!/\.kml$/i.test(entryName)) {
+            continue;
+        }
+
+        if (view.getUint32(localHeaderOffset, true) !== localSignature) {
+            throw new Error('Invalid KMZ: malformed local file header.');
+        }
+
+        const localFileNameLength = view.getUint16(localHeaderOffset + 26, true);
+        const localExtraLength = view.getUint16(localHeaderOffset + 28, true);
+        const fileDataOffset = localHeaderOffset + 30 + localFileNameLength + localExtraLength;
+        const compressedBytes = bytes.slice(fileDataOffset, fileDataOffset + compressedSize);
+        const kmlBytes = await inflateZipEntry(compressedBytes, compressionMethod);
+        return decoder.decode(kmlBytes);
+    }
+
+    throw new Error('No KML file found inside KMZ.');
+}
+
+function parseCoordinatesText(value) {
+    const [lngRaw, latRaw] = String(value || '').trim().split(',');
+    const lat = Number(latRaw);
+    const lng = Number(lngRaw);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+        return null;
+    }
+    return { lat, lng };
+}
+
+function parseKmlSitePoints(kmlText) {
+    const parser = new DOMParser();
+    const xml = parser.parseFromString(kmlText, 'application/xml');
+    const parseError = xml.querySelector('parsererror');
+    if (parseError) {
+        throw new Error('Invalid KML document.');
+    }
+
+    const placemarks = [...xml.getElementsByTagNameNS('*', 'Placemark')];
+    const points = [];
+
+    placemarks.forEach((placemark, index) => {
+        const pointNode = placemark.getElementsByTagNameNS('*', 'Point')[0];
+        if (!pointNode) return;
+
+        const coordinatesNode = pointNode.getElementsByTagNameNS('*', 'coordinates')[0];
+        const coords = parseCoordinatesText(coordinatesNode?.textContent);
+        if (!coords) return;
+
+        const nameNode = placemark.getElementsByTagNameNS('*', 'name')[0];
+        const descriptionNode = placemark.getElementsByTagNameNS('*', 'description')[0];
+        const name = String(nameNode?.textContent || `Placemark ${index + 1}`).trim();
+
+        points.push({
+            id: `kml-point-${index + 1}`,
+            name,
+            description: String(descriptionNode?.textContent || '').trim(),
+            lat: coords.lat,
+            lng: coords.lng
+        });
+    });
+
+    return points;
+}
+
+function buildCustomSitePopupHtml(point, overlay) {
+    return `
+      <b>${escapeHtml(point.name || overlay.label)}</b><br>
+      Overlay: ${escapeHtml(overlay.label)}<br>
+      Lat/Lon: ${roundTo(point.lat, 6)}, ${roundTo(point.lng, 6)}<br>
+      ${point.description ? `<div style="margin-top:6px">${escapeHtml(point.description)}</div>` : ''}
+    `;
+}
+
+function createCustomSiteOverlayLayer(point, overlay) {
+    const layer = L.circleMarker([point.lat, point.lng], {
+        renderer: siteBddCanvasRenderer,
+        radius: overlay.settings.siteRadius,
+        weight: Math.max(1, roundTo(overlay.settings.siteRadius * 0.3, 1)),
+        color: overlay.color,
+        opacity: overlay.settings.siteOpacity,
+        fillColor: overlay.color,
+        fillOpacity: overlay.settings.siteOpacity
+    }).bindPopup(buildCustomSitePopupHtml(point, overlay));
+
+    if (overlay.showSiteNames) {
+        attachSiteBddNameTooltip(layer, { siteName: point.name }, overlay.color, 'top');
+    }
+
+    return layer;
+}
+
+function computeDestinationPoint(lat, lng, bearingDeg, distanceKm) {
+    const bearing = (bearingDeg * Math.PI) / 180;
+    const distanceRatio = distanceKm / 6371;
+    const latRad = (lat * Math.PI) / 180;
+    const lngRad = (lng * Math.PI) / 180;
+
+    const destLat = Math.asin(
+        Math.sin(latRad) * Math.cos(distanceRatio) +
+        Math.cos(latRad) * Math.sin(distanceRatio) * Math.cos(bearing)
+    );
+
+    const destLng = lngRad + Math.atan2(
+        Math.sin(bearing) * Math.sin(distanceRatio) * Math.cos(latRad),
+        Math.cos(distanceRatio) - Math.sin(latRad) * Math.sin(destLat)
+    );
+
+    return {
+        lat: (destLat * 180) / Math.PI,
+        lng: (destLng * 180) / Math.PI
+    };
+}
+
+function createSectorTriangleCoords(lat, lng, azimuth, settings) {
+    if (!Number.isFinite(azimuth)) {
+        return null;
+    }
+
+    const left = computeDestinationPoint(
+        lat,
+        lng,
+        azimuth - settings.sectorHalfAngle,
+        settings.sectorLengthKm
+    );
+    const right = computeDestinationPoint(
+        lat,
+        lng,
+        azimuth + settings.sectorHalfAngle,
+        settings.sectorLengthKm
+    );
+    return [
+        [lat, lng],
+        [left.lat, left.lng],
+        [right.lat, right.lng]
+    ];
+}
+
+function formatSiteBddPopup(item, tech, mode) {
+    if (mode === 'sectors') {
+        return `
+            <b>${escapeHtml(item.sectorName || item.siteName || SITE_BDD_CONFIG[tech].label)}</b><br>
+            Tech: ${escapeHtml(tech)}<br>
+            Site: ${escapeHtml(item.siteName || '-') }<br>
+            Azimut: ${Number.isFinite(item.azimuth) ? Math.round(item.azimuth) : 'N/A'}<br>
+            Lat/Lon: ${roundTo(item.lat, 6)}, ${roundTo(item.lng, 6)}
+        `;
+    }
+
+    return `
+        <b>${escapeHtml(item.siteName || SITE_BDD_CONFIG[tech].label)}</b><br>
+        Tech: ${escapeHtml(tech)}<br>
+        Sectors: ${item.sectorCount || 0}<br>
+        Lat/Lon: ${roundTo(item.lat, 6)}, ${roundTo(item.lng, 6)}
+    `;
+}
+
+function createSiteBddSiteLayer(item, tech, color, settings) {
+    return L.circleMarker([item.lat, item.lng], {
+        renderer: siteBddCanvasRenderer,
+        radius: settings.siteRadius,
+        weight: Math.max(1, roundTo(settings.siteRadius * 0.35, 1)),
+        color,
+        opacity: settings.siteOpacity,
+        fillColor: color,
+        fillOpacity: settings.siteOpacity
+    }).bindPopup(formatSiteBddPopup(item, tech, 'sites'));
+}
+
+function createSiteBddSectorLayer(item, tech, color, settings) {
+    const triangleCoords = createSectorTriangleCoords(item.lat, item.lng, item.azimuth, settings);
+    if (!triangleCoords) {
+        return createSiteBddSiteLayer(item, tech, color, settings);
+    }
+
+    return L.polygon(triangleCoords, {
+        renderer: siteBddCanvasRenderer,
+        color,
+        weight: 1.15,
+        opacity: Math.min(1, settings.sectorOpacity + 0.35),
+        fillColor: color,
+        fillOpacity: settings.sectorOpacity,
+        lineJoin: 'round'
+    }).bindPopup(formatSiteBddPopup(item, tech, 'sectors'));
+}
+
+function attachSiteBddNameTooltip(layer, item, settingsOrColor, direction = 'top') {
+    if (!item?.siteName) {
+        return layer;
+    }
+
+    const labelSettings = typeof settingsOrColor === 'string'
+        ? {
+            textColor: settingsOrColor,
+            backgroundColor: '#020617',
+            backgroundOpacity: 0.82
+        }
+        : {
+            textColor: settingsOrColor?.labelTextColor || '#ffffff',
+            backgroundColor: settingsOrColor?.labelBackgroundColor || '#020617',
+            backgroundOpacity: settingsOrColor?.labelBackgroundOpacity ?? 0.82
+        };
+
+    layer.bindTooltip(
+        `<span class="site-bdd-name-tooltip__text" style="--label-color: ${escapeHtml(labelSettings.textColor)}; --label-background: ${escapeHtml(hexToRgba(labelSettings.backgroundColor, labelSettings.backgroundOpacity))}">${escapeHtml(item.siteName)}</span>`,
+        {
+            permanent: true,
+            direction,
+            offset: direction === 'top' ? [10, -10] : [10, 0],
+            opacity: 1,
+            className: 'site-bdd-name-tooltip'
+        }
+    );
+
+    return layer;
+}
+
+function createSiteBddLabelAnchor(item) {
+    return L.marker([item.lat, item.lng], {
+        interactive: false,
+        keyboard: false,
+        icon: L.divIcon({
+            className: 'site-bdd-label-anchor',
+            html: '',
+            iconSize: [1, 1],
+            iconAnchor: [0, 0]
+        })
+    });
+}
+
+function updateSiteBddControls() {
+    bddModeSites.checked = state.siteBdd.mode === 'sites';
+    bddModeSectors.checked = state.siteBdd.mode === 'sectors';
+    updateGlobalSectorLengthControl();
+    const renderOrder = getSiteBddRenderOrder();
+
+    renderOrder.forEach((tech, index) => {
+        const dataset = state.siteBdd.datasets[tech];
+        const controls = siteBddControls[tech];
+        if (!controls) return;
+
+        if (bddLayerGrid && controls.row) {
+            bddLayerGrid.appendChild(controls.row);
+        }
+        controls.toggle.checked = dataset.visible;
+        controls.color.value = dataset.color;
+        controls.moveUp.disabled = index === 0;
+        controls.moveDown.disabled = index === renderOrder.length - 1;
+        controls.settingsToggle.setAttribute('aria-expanded', String(dataset.settingsOpen));
+        controls.settingsToggle.textContent = dataset.settingsOpen ? '✕' : '⚙';
+        controls.settingsPanel.hidden = !dataset.settingsOpen;
+        controls.showNames.checked = dataset.showSiteNames;
+        if (siteBddLegendName) {
+            siteBddLegendName.value = state.siteBdd.legendName || 'Sites IAM';
+        }
+        controls.siteSizeInput.value = String(dataset.settings.siteRadius);
+        controls.siteOpacityInput.value = String(dataset.settings.siteOpacity);
+        controls.sectorLengthInput.value = String(Math.round(dataset.settings.sectorLengthKm * 1000));
+        controls.sectorWidthInput.value = String(dataset.settings.sectorHalfAngle * 2);
+        controls.sectorOpacityInput.value = String(dataset.settings.sectorOpacity);
+        if (controls.labelTextColorInput) controls.labelTextColorInput.value = dataset.settings.labelTextColor;
+        if (controls.labelBackgroundColorInput) controls.labelBackgroundColorInput.value = dataset.settings.labelBackgroundColor;
+        if (controls.labelBackgroundOpacityInput) controls.labelBackgroundOpacityInput.value = String(dataset.settings.labelBackgroundOpacity);
+        updateSiteBddRenderControlLabels(tech, dataset.settings);
+        controls.count.textContent = state.siteBdd.imported
+            ? `${dataset.sites.length.toLocaleString()} sites / ${dataset.sectors.length.toLocaleString()} sectors`
+            : '0 sites';
+    });
+}
+
+function updateSiteBddHint(message = '') {
+    if (!sitesRenderHint) return;
+    sitesRenderHint.textContent = message;
+}
+
+function renderSiteBddLayers() {
+    const mode = state.siteBdd.mode;
+    const bounds = map.getBounds().pad(0.15);
+    const visibleLabels = [];
+    let limited = false;
+    const renderOrder = getSiteBddRenderOrder();
+    const drawOrder = [...renderOrder].reverse();
+
+    drawOrder.forEach((tech) => {
+        const dataset = state.siteBdd.datasets[tech];
+        const group = state.mapLayerGroups.siteBdds[tech];
+        group.clearLayers();
+
+        if (!state.siteBdd.imported || !dataset.visible) {
+            return;
+        }
+
+        if (mode === 'sectors' && map.getZoom() < SITE_BDD_SECTOR_MIN_ZOOM) {
+            return;
+        }
+
+        const items = collectSiteBddItemsInBounds(
+            mode === 'sites' ? dataset.siteGrid : dataset.sectorGrid,
+            bounds
+        );
+
+        const renderItems = mode === 'sectors' && items.length > SITE_BDD_SECTOR_RENDER_LIMIT
+            ? items.slice(0, SITE_BDD_SECTOR_RENDER_LIMIT)
+            : items;
+
+        if (mode === 'sectors' && renderItems.length < items.length) {
+            limited = true;
+        }
+
+        renderItems.forEach((item) => {
+            const layer = mode === 'sites'
+                ? createSiteBddSiteLayer(item, tech, dataset.color, dataset.settings)
+                : createSiteBddSectorLayer(item, tech, dataset.color, dataset.settings);
+            if (dataset.showSiteNames && mode === 'sites') {
+                attachSiteBddNameTooltip(layer, item, dataset.settings, mode === 'sites' ? 'top' : 'center');
+            }
+            layer.addTo(group);
+            if (layer.bringToFront) {
+                layer.bringToFront();
+            }
+        });
+
+        if (dataset.showSiteNames && mode === 'sectors') {
+            const labelItems = collectSiteBddItemsInBounds(dataset.siteGrid, bounds);
+            labelItems.forEach((item) => {
+                const labelAnchor = createSiteBddLabelAnchor(item);
+                attachSiteBddNameTooltip(labelAnchor, item, dataset.settings, 'top');
+                labelAnchor.addTo(group);
+            });
+        }
+    });
+
+    renderOrder.forEach((tech, orderIndex) => {
+        const dataset = state.siteBdd.datasets[tech];
+        if (!state.siteBdd.imported || !dataset.visible) {
+            return;
+        }
+        if (mode === 'sectors' && map.getZoom() < SITE_BDD_SECTOR_MIN_ZOOM) {
+            return;
+        }
+        const visibleCount = collectSiteBddItemsInBounds(
+            mode === 'sites' ? dataset.siteGrid : dataset.sectorGrid,
+            bounds
+        ).length;
+        visibleLabels.push(`${orderIndex + 1}. ${dataset.label}: ${visibleCount.toLocaleString()} ${mode === 'sites' ? 'visible sites' : 'visible sectors'}`);
+    });
+
+    if (!state.siteBdd.imported) {
+        updateSiteBddHint('');
+        updateLegend();
+        return;
+    }
+
+    if (mode === 'sectors' && map.getZoom() < SITE_BDD_SECTOR_MIN_ZOOM) {
+        updateSiteBddHint(`Zoom in to level ${SITE_BDD_SECTOR_MIN_ZOOM} or more to display sectors.`);
+        updateLegend();
+        return;
+    }
+
+    const summary = visibleLabels.join(' • ');
+    const suffix = limited ? ' • zoom in further to render all visible sectors.' : '';
+    updateSiteBddHint(summary ? `${summary}${suffix}` : '');
+    updateLegend();
+}
+
+function updateCustomSiteOverlaySummary() {
+    if (!kmlSitesSummaryText) return;
+
+    if (!state.customSiteOverlays.length) {
+        kmlSitesSummaryText.textContent = 'No KML/KMZ site overlays imported yet.';
+        return;
+    }
+
+    const summary = state.customSiteOverlays
+        .map((overlay) => `${overlay.label}: ${overlay.points.length.toLocaleString()} sites`)
+        .join(' • ');
+    kmlSitesSummaryText.textContent = `${state.customSiteOverlays.length} overlay(s) imported. ${summary}`;
+}
+
+function renderCustomSiteOverlayControls() {
+    if (!kmlSiteOverlayList) return;
+    kmlSiteOverlayList.innerHTML = '';
+
+    state.customSiteOverlays.forEach((overlay) => {
+        const row = document.createElement('div');
+        row.className = 'bdd-layer-row kml-site-row';
+
+        const visibility = document.createElement('label');
+        visibility.className = 'bdd-visibility';
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.checked = overlay.visible;
+        checkbox.addEventListener('change', (event) => {
+            overlay.visible = event.target.checked;
+            renderCustomSiteOverlays();
+        });
+        const title = document.createElement('span');
+        title.textContent = overlay.label;
+        visibility.appendChild(checkbox);
+        visibility.appendChild(title);
+
+        const actions = document.createElement('div');
+        actions.className = 'kml-site-actions';
+        const removeBtn = document.createElement('button');
+        removeBtn.type = 'button';
+        removeBtn.className = 'btn icon-only small kml-site-remove-btn';
+        removeBtn.title = `Remove ${overlay.label}`;
+        removeBtn.textContent = '×';
+        removeBtn.addEventListener('click', () => {
+            state.customSiteOverlays = state.customSiteOverlays.filter((item) => item.id !== overlay.id);
+            updateCustomSiteOverlaySummary();
+            renderCustomSiteOverlayControls();
+            renderCustomSiteOverlays();
+        });
+        actions.appendChild(removeBtn);
+
+        const settingsToggle = document.createElement('button');
+        settingsToggle.type = 'button';
+        settingsToggle.className = 'btn icon-only small bdd-settings-toggle';
+        settingsToggle.title = `Toggle ${overlay.label} settings`;
+        settingsToggle.textContent = overlay.settingsOpen ? '✕' : '⚙';
+        settingsToggle.setAttribute('aria-expanded', String(overlay.settingsOpen));
+
+        const colorInput = document.createElement('input');
+        colorInput.type = 'color';
+        colorInput.className = 'bdd-color-input';
+        colorInput.value = overlay.color;
+        colorInput.addEventListener('input', (event) => {
+            overlay.color = event.target.value;
+            renderCustomSiteOverlays();
+        });
+
+        const count = document.createElement('span');
+        count.className = 'bdd-count';
+        count.textContent = `${overlay.points.length.toLocaleString()} sites`;
+
+        const controls = document.createElement('div');
+        controls.className = 'bdd-layer-controls';
+        controls.hidden = !overlay.settingsOpen;
+
+        settingsToggle.addEventListener('click', () => {
+            overlay.settingsOpen = !overlay.settingsOpen;
+            renderCustomSiteOverlayControls();
+        });
+
+        const showNamesLabel = document.createElement('label');
+        showNamesLabel.className = 'bdd-inline-check';
+        const showNamesInput = document.createElement('input');
+        showNamesInput.type = 'checkbox';
+        showNamesInput.checked = overlay.showSiteNames;
+        showNamesInput.addEventListener('change', (event) => {
+            overlay.showSiteNames = event.target.checked;
+            renderCustomSiteOverlays();
+        });
+        const showNamesText = document.createElement('span');
+        showNamesText.textContent = 'Show site names';
+        showNamesLabel.appendChild(showNamesInput);
+        showNamesLabel.appendChild(showNamesText);
+        controls.appendChild(showNamesLabel);
+
+        const legendNameLabel = document.createElement('label');
+        legendNameLabel.className = 'text-tool-field bdd-legend-field';
+        const legendNameTitle = document.createElement('span');
+        legendNameTitle.textContent = 'Legend name';
+        const legendNameInput = document.createElement('input');
+        legendNameInput.type = 'text';
+        legendNameInput.value = overlay.legendName || overlay.label;
+        legendNameInput.placeholder = overlay.label;
+        legendNameInput.addEventListener('input', (event) => {
+            overlay.legendName = event.target.value;
+            updateLegend();
+        });
+        legendNameLabel.appendChild(legendNameTitle);
+        legendNameLabel.appendChild(legendNameInput);
+        controls.appendChild(legendNameLabel);
+
+        const grid = document.createElement('div');
+        grid.className = 'bdd-mini-grid';
+
+        const siteSizeRow = document.createElement('div');
+        siteSizeRow.className = 'bdd-range-row';
+        siteSizeRow.innerHTML = `
+            <div class="bdd-range-header">
+              <span>Site size</span>
+              <span class="bdd-range-value">${Math.round(overlay.settings.siteRadius)} px</span>
+            </div>
+        `;
+        const siteSizeInput = document.createElement('input');
+        siteSizeInput.type = 'range';
+        siteSizeInput.className = 'bdd-range-input';
+        siteSizeInput.min = '2';
+        siteSizeInput.max = '16';
+        siteSizeInput.step = '1';
+        siteSizeInput.value = String(overlay.settings.siteRadius);
+        siteSizeInput.addEventListener('input', (event) => {
+            overlay.settings.siteRadius = Number(event.target.value);
+            renderCustomSiteOverlayControls();
+            renderCustomSiteOverlays();
+        });
+        siteSizeRow.appendChild(siteSizeInput);
+
+        const siteOpacityRow = document.createElement('div');
+        siteOpacityRow.className = 'bdd-range-row';
+        siteOpacityRow.innerHTML = `
+            <div class="bdd-range-header">
+              <span>Site opacity</span>
+              <span class="bdd-range-value">${Math.round(overlay.settings.siteOpacity * 100)}%</span>
+            </div>
+        `;
+        const siteOpacityInput = document.createElement('input');
+        siteOpacityInput.type = 'range';
+        siteOpacityInput.className = 'bdd-range-input';
+        siteOpacityInput.min = '0.1';
+        siteOpacityInput.max = '1';
+        siteOpacityInput.step = '0.05';
+        siteOpacityInput.value = String(overlay.settings.siteOpacity);
+        siteOpacityInput.addEventListener('input', (event) => {
+            overlay.settings.siteOpacity = Number(event.target.value);
+            renderCustomSiteOverlayControls();
+            renderCustomSiteOverlays();
+        });
+        siteOpacityRow.appendChild(siteOpacityInput);
+
+        grid.appendChild(siteSizeRow);
+        grid.appendChild(siteOpacityRow);
+        controls.appendChild(grid);
+
+        row.appendChild(visibility);
+        row.appendChild(actions);
+        row.appendChild(settingsToggle);
+        row.appendChild(colorInput);
+        row.appendChild(count);
+        row.appendChild(controls);
+        kmlSiteOverlayList.appendChild(row);
+    });
+}
+
+function renderCustomSiteOverlays() {
+    const group = state.mapLayerGroups.customSiteOverlays;
+    group.clearLayers();
+
+    if (!state.customSiteOverlays.length) {
+        updateLegend();
+        return;
+    }
+
+    const bounds = map.getBounds().pad(0.15);
+    state.customSiteOverlays.forEach((overlay) => {
+        if (!overlay.visible) return;
+        const items = collectSiteBddItemsInBounds(overlay.pointGrid, bounds);
+        items.forEach((point) => {
+            const layer = createCustomSiteOverlayLayer(point, overlay);
+            layer.addTo(group);
+            if (layer.bringToFront) {
+                layer.bringToFront();
+            }
+        });
+    });
+    updateLegend();
+}
+
+function resetSiteBddState() {
+    loadBuiltInSiteBddData({ showStatus: true }).catch((error) => {
+        console.error(error);
+        state.siteBdd = createEmptySiteBddState();
+        Object.values(state.mapLayerGroups.siteBdds).forEach((group) => group.clearLayers());
+        updateSiteBddSummaryText('Built-in sites BDD could not be restored.');
+        updateSiteBddHint('');
+        updateSiteBddControls();
+    });
+}
+
+function resetCustomSiteOverlays() {
+    state.customSiteOverlays = [];
+    state.mapLayerGroups.customSiteOverlays.clearLayers();
+    updateCustomSiteOverlaySummary();
+    renderCustomSiteOverlayControls();
+}
+
+async function processSitesWorkbook(file) {
+    updateStatus(true, 'Reading sites workbook...');
+    try {
+        const XLSX = await loadXlsxModule();
+        const arrayBuffer = await file.arrayBuffer();
+        const workbook = XLSX.read(arrayBuffer, { type: 'array' });
+        const payload = createSiteBddPayloadFromWorkbook(XLSX, workbook, file.name);
+        state.siteBdd = buildSiteBddStateFromPayload(payload, { fileName: file.name });
+
+        const summaryParts = getSiteBddSummaryParts();
+        updateSiteBddSummaryText(`${file.name} imported. ${summaryParts.join(' • ')}. Use Clear to restore the built-in BDD.`);
+        updateSiteBddControls();
+        renderSiteBddLayers();
+
+    } catch (error) {
+        console.error(error);
+        alert(`Error parsing sites workbook: ${error.message}`);
+    } finally {
+        updateStatus(false);
+    }
+}
+
+async function loadBuiltInSiteBddData(options = {}) {
+    const { showStatus = false } = options;
+    if (showStatus) {
+        updateStatus(true, 'Loading built-in sites BDD...');
+    }
+
+    try {
+        const response = await fetch(DEFAULT_SITE_BDD_DATA_URL);
+        if (!response.ok) {
+            throw new Error(`Failed to load built-in sites BDD (${response.status})`);
+        }
+
+        const payload = await response.json();
+        state.siteBdd = buildSiteBddStateFromPayload(payload, { fileName: payload.fileName || 'Built-in Sites BDD' });
+        updateSiteBddSummaryText(`Built-in sites BDD loaded. ${getSiteBddSummaryParts().join(' • ')}`);
+        updateSiteBddControls();
+        renderSiteBddLayers();
+    } finally {
+        if (showStatus) {
+            updateStatus(false);
+        }
+    }
+}
+
+async function processKmlSiteFiles(fileList) {
+    const files = [...fileList];
+    if (!files.length) return;
+
+    updateStatus(true, files.length === 1 ? `Reading ${files[0].name}...` : `Reading ${files.length} KML/KMZ files...`);
+    try {
+        const importedOverlays = [];
+
+        for (const file of files) {
+            const isKmz = /\.kmz$/i.test(file.name);
+            const kmlText = isKmz ? await extractKmlTextFromKmz(file) : await file.text();
+            const points = parseKmlSitePoints(kmlText);
+            if (!points.length) {
+                throw new Error(`${file.name} does not contain any Point placemarks.`);
+            }
+            importedOverlays.push(createCustomSiteOverlay(file.name, points, state.customSiteOverlays.length + importedOverlays.length));
+        }
+
+        state.customSiteOverlays = [...state.customSiteOverlays, ...importedOverlays];
+        updateCustomSiteOverlaySummary();
+        renderCustomSiteOverlayControls();
+        renderCustomSiteOverlays();
+    } catch (error) {
+        console.error(error);
+        alert(`Error importing KML/KMZ sites: ${error.message}`);
+    } finally {
+        updateStatus(false);
+    }
 }
 
 function buildSearchVariants(value) {
@@ -2164,7 +3589,817 @@ function getNetworkBadgeClass(label) {
     return 'network-badge-default';
 }
 
+function isManualAddedPoint(point) {
+    return Boolean(point?.isManualAdded || point?.original?.__manualAdded);
+}
+
+function updateNetworkBadgeControls() {
+    NETWORK_BADGE_OPTIONS.forEach((label) => {
+        const control = networkBadgeControls[label];
+        if (control) {
+            control.checked = state.visibleNetworkBadges.has(label);
+        }
+    });
+
+    if (toggleBadgesBtn) {
+        const visibleCount = [...state.visibleNetworkBadges].length;
+        toggleBadgesBtn.textContent = visibleCount === NETWORK_BADGE_OPTIONS.length
+            ? 'Badges'
+            : `Badges (${visibleCount})`;
+    }
+}
+
+function clampBadgePopoverPosition(left, top) {
+    if (!badgeFilterPopover) {
+        return { left, top };
+    }
+
+    const viewportWidth = window.innerWidth;
+    const viewportHeight = window.innerHeight;
+    const rect = badgeFilterPopover.getBoundingClientRect();
+    const maxLeft = Math.max(12, viewportWidth - rect.width - 12);
+    const maxTop = Math.max(12, viewportHeight - rect.height - 12);
+
+    return {
+        left: Math.min(Math.max(12, left), maxLeft),
+        top: Math.min(Math.max(12, top), maxTop)
+    };
+}
+
+function applyBadgePopoverPosition(left, top) {
+    if (!badgeFilterPopover) return;
+    const next = clampBadgePopoverPosition(left, top);
+    badgePopoverPosition = next;
+    badgeFilterPopover.style.left = `${next.left}px`;
+    badgeFilterPopover.style.top = `${next.top}px`;
+    badgeFilterPopover.style.right = 'auto';
+}
+
+function applyLegendPosition(left, top) {
+    if (!drLegend) return;
+    const parent = drLegend.offsetParent || document.body;
+    const padding = 10;
+    const maxX = parent.clientWidth - drLegend.offsetWidth - padding;
+    const maxY = parent.clientHeight - drLegend.offsetHeight - padding;
+
+    left = Math.max(padding, Math.min(left, maxX));
+    top = Math.max(padding, Math.min(top, maxY));
+
+    drLegend.style.left = `${left}px`;
+    drLegend.style.top = `${top}px`;
+    drLegend.style.bottom = 'auto';
+    drLegend.style.right = 'auto';
+
+    legendPosition = { left, top };
+}
+
+
+function openBadgeFilterPopover() {
+    if (!badgeFilterPopover || !toggleBadgesBtn) return;
+
+    badgeFilterPopover.removeAttribute('hidden');
+    toggleBadgesBtn.setAttribute('aria-expanded', 'true');
+
+    if (!badgePopoverPosition) {
+        const buttonRect = toggleBadgesBtn.getBoundingClientRect();
+        const left = Math.max(12, buttonRect.right - 180);
+        const top = buttonRect.bottom + 10;
+        applyBadgePopoverPosition(left, top);
+    } else {
+        applyBadgePopoverPosition(badgePopoverPosition.left, badgePopoverPosition.top);
+    }
+}
+
+function closeBadgeFilterPopover() {
+    if (!badgeFilterPopover || !toggleBadgesBtn) return;
+    badgeFilterPopover.setAttribute('hidden', '');
+    toggleBadgesBtn.setAttribute('aria-expanded', 'false');
+}
+
+function openImportMenuPopover() {
+    if (!importMenuPopover || !toggleImportMenuBtn) return;
+    importMenuPopover.removeAttribute('hidden');
+    toggleImportMenuBtn.setAttribute('aria-expanded', 'true');
+
+    const buttonRect = toggleImportMenuBtn.getBoundingClientRect();
+    importMenuPopover.style.left = `${Math.max(12, buttonRect.right - 220)}px`;
+    importMenuPopover.style.top = `${buttonRect.bottom + 10}px`;
+    importMenuPopover.style.right = 'auto';
+}
+
+function closeImportMenuPopover() {
+    if (!importMenuPopover || !toggleImportMenuBtn) return;
+    importMenuPopover.setAttribute('hidden', '');
+    toggleImportMenuBtn.setAttribute('aria-expanded', 'false');
+}
+
+function setSectionCollapsed(toggleButton, content, collapsed) {
+    if (!toggleButton || !content) return;
+    toggleButton.setAttribute('aria-expanded', String(!collapsed));
+    toggleButton.textContent = collapsed ? '▸' : '▾';
+    content.hidden = collapsed;
+}
+
+function bindSectionCollapse(toggleButton, content, initiallyCollapsed = false) {
+    if (!toggleButton || !content) return;
+    setSectionCollapsed(toggleButton, content, initiallyCollapsed);
+    toggleButton.addEventListener('click', () => {
+        const isExpanded = toggleButton.getAttribute('aria-expanded') === 'true';
+        setSectionCollapsed(toggleButton, content, isExpanded);
+    });
+}
+
+function clampFloatingPopoverPosition(element, left, top) {
+    if (!element) {
+        return { left, top };
+    }
+
+    const viewportWidth = window.innerWidth;
+    const viewportHeight = window.innerHeight;
+    const rect = element.getBoundingClientRect();
+    const maxLeft = Math.max(12, viewportWidth - rect.width - 12);
+    const maxTop = Math.max(12, viewportHeight - rect.height - 12);
+
+    return {
+        left: Math.min(Math.max(12, left), maxLeft),
+        top: Math.min(Math.max(12, top), maxTop)
+    };
+}
+
+function applyTextPopoverPosition(left, top) {
+    if (!textToolPopover) return;
+    const next = clampFloatingPopoverPosition(textToolPopover, left, top);
+    textPopoverPosition = next;
+    textToolPopover.style.left = `${next.left}px`;
+    textToolPopover.style.top = `${next.top}px`;
+    textToolPopover.style.right = 'auto';
+}
+
+function openTextToolPopover() {
+    if (!textToolPopover || !toggleTextToolBtn) return;
+    textToolPopover.removeAttribute('hidden');
+    toggleTextToolBtn.setAttribute('aria-expanded', 'true');
+
+    if (!textPopoverPosition) {
+        const buttonRect = toggleTextToolBtn.getBoundingClientRect();
+        const left = Math.max(12, buttonRect.right - 260);
+        const top = buttonRect.bottom + 10;
+        applyTextPopoverPosition(left, top);
+    } else {
+        applyTextPopoverPosition(textPopoverPosition.left, textPopoverPosition.top);
+    }
+}
+
+function closeTextToolPopover() {
+    if (!textToolPopover || !toggleTextToolBtn) return;
+    textToolPopover.setAttribute('hidden', '');
+    toggleTextToolBtn.setAttribute('aria-expanded', 'false');
+}
+
+function applyDrawPopoverPosition(left, top) {
+    if (!drawToolPopover) return;
+    const next = clampFloatingPopoverPosition(drawToolPopover, left, top);
+    drawPopoverPosition = next;
+    drawToolPopover.style.left = `${next.left}px`;
+    drawToolPopover.style.top = `${next.top}px`;
+    drawToolPopover.style.right = 'auto';
+}
+
+function openDrawToolPopover() {
+    if (!drawToolPopover || !toggleDrawToolBtn) return;
+    drawToolPopover.removeAttribute('hidden');
+    toggleDrawToolBtn.setAttribute('aria-expanded', 'true');
+
+    if (!drawPopoverPosition) {
+        const buttonRect = toggleDrawToolBtn.getBoundingClientRect();
+        const left = Math.max(12, buttonRect.right - 260);
+        const top = buttonRect.bottom + 10;
+        applyDrawPopoverPosition(left, top);
+    } else {
+        applyDrawPopoverPosition(drawPopoverPosition.left, drawPopoverPosition.top);
+    }
+}
+
+function closeDrawToolPopover() {
+    if (!drawToolPopover || !toggleDrawToolBtn) return;
+    drawToolPopover.setAttribute('hidden', '');
+    toggleDrawToolBtn.setAttribute('aria-expanded', 'false');
+}
+
+function buildManualSitePopupHtml(site) {
+    const analyzedPoint = state.processedPoints.find((point) => point.id === site.id);
+    if (analyzedPoint) {
+        return buildPointPopupHtml(analyzedPoint);
+    }
+
+    return `
+      <b>${escapeHtml(site.name || site.displayName || site.id)}</b><br>
+      Lat/Lon: ${roundTo(site.lat, 6)}, ${roundTo(site.lng, 6)}
+    `;
+}
+
+function createManualSiteMarker(site) {
+    const manualLabel = site.name || site.displayName || site.original?.['Site Name'] || site.id || 'Manual Site';
+    const marker = L.marker([site.lat, site.lng], {
+        draggable: true,
+        icon: L.divIcon({
+            className: 'manual-site-marker-icon',
+            html: `
+                <div class="manual-site-marker" style="cursor: grab;">
+                    <span class="manual-site-marker__label">${escapeHtml(manualLabel)}</span>
+                    <span class="manual-site-marker__square"></span>
+                </div>
+            `,
+            iconSize: [0, 0],
+            iconAnchor: [0, 0],
+            popupAnchor: [0, -34]
+        })
+    }).bindPopup(buildManualSitePopupHtml(site));
+
+    marker.on('dragend', function (event) {
+        const newLatLng = event.target.getLatLng();
+        
+        site.lat = newLatLng.lat;
+        site.lng = newLatLng.lng;
+        
+        const pointObj = state.points.find(p => p.id === site.id);
+        if (pointObj) {
+            pointObj.lat = newLatLng.lat;
+            pointObj.lng = newLatLng.lng;
+            if (pointObj.original) {
+                pointObj.original['Latitude'] = newLatLng.lat;
+                pointObj.original['Longitude'] = newLatLng.lng;
+            }
+            
+            // Re-analyze to update geo fields and UI
+            analyzePoints().then(() => {
+                // Focus point again to reopen popup and recenter if needed
+                const processed = state.processedPoints.find(p => p.id === site.id);
+                if (processed) {
+                    focusPointOnMap(processed, { zoom: map.getZoom(), highlight: true });
+                }
+            });
+        }
+    });
+
+    return marker;
+}
+
+function renderManualSites() {
+    const group = state.mapLayerGroups.manualSites;
+    group.clearLayers();
+
+    state.manualSites.forEach((site) => {
+        createManualSiteMarker(site).addTo(group);
+    });
+}
+
+function formatRulerDistance(distanceMeters) {
+    if (distanceMeters >= 1000) {
+        return `${(distanceMeters / 1000).toFixed(2)} km`;
+    }
+    return `${Math.round(distanceMeters)} m`;
+}
+
+function createRulerLabel(latlng, text) {
+    return L.marker(latlng, {
+        interactive: false,
+        keyboard: false,
+        icon: L.divIcon({
+            className: 'ruler-label',
+            html: `<span class="ruler-label__text">${escapeHtml(text)}</span>`,
+            iconSize: [0, 0],
+            iconAnchor: [0, 0]
+        })
+    });
+}
+
+function createRulerPointMarker(latlng) {
+    return L.marker(latlng, {
+        interactive: false,
+        keyboard: false,
+        icon: L.divIcon({
+            className: 'ruler-point-marker',
+            html: '<span class="ruler-point-marker__dot"></span>',
+            iconSize: [0, 0],
+            iconAnchor: [0, 0]
+        })
+    });
+}
+
+function computeRulerMeasurementStats(points) {
+    let totalMeters = 0;
+    const segments = [];
+
+    for (let index = 1; index < points.length; index += 1) {
+        const start = points[index - 1];
+        const end = points[index];
+        const distanceMeters = map.distance(start, end);
+        totalMeters += distanceMeters;
+        segments.push({
+            start,
+            end,
+            distanceMeters,
+            midpoint: L.latLng(
+                (start.lat + end.lat) / 2,
+                (start.lng + end.lng) / 2
+            )
+        });
+    }
+
+    return { totalMeters, segments };
+}
+
+function getSelectedRulerMeasurement() {
+    return state.ruler.measurements.find((measurement) => measurement.id === state.ruler.selectedId) || null;
+}
+
+function renderRulerMeasurements() {
+    const group = state.mapLayerGroups.ruler;
+    const handleGroup = state.mapLayerGroups.rulerHandles;
+    group.clearLayers();
+    handleGroup.clearLayers();
+
+    const renderMeasurement = (measurement, isCurrent = false) => {
+        const points = measurement.points;
+        if (points.length === 0) return;
+
+        points.forEach((latlng) => {
+            createRulerPointMarker(latlng).addTo(group);
+        });
+
+        if (points.length >= 2) {
+            const isSelected = !isCurrent && measurement.id === state.ruler.selectedId;
+            const polyline = L.polyline(points, {
+                color: isCurrent ? '#818cf8' : (isSelected ? '#60a5fa' : '#22c55e'),
+                weight: 3,
+                opacity: 0.95,
+                dashArray: isCurrent ? '8 6' : null
+            }).addTo(group);
+
+            if (!isCurrent) {
+                polyline.on('click', (event) => {
+                    L.DomEvent.stopPropagation(event);
+                    state.ruler.selectedId = measurement.id;
+                    renderRulerMeasurements();
+                });
+            }
+
+            const { segments } = computeRulerMeasurementStats(points);
+            segments.forEach((segment) => {
+                createRulerLabel(segment.midpoint, formatRulerDistance(segment.distanceMeters)).addTo(group);
+            });
+
+            if (isSelected) {
+                createDrawingHandle(points[0], (latlng) => {
+                    measurement.points[0] = latlng;
+                    renderRulerMeasurements();
+                }).addTo(handleGroup);
+
+                createDrawingHandle(points[points.length - 1], (latlng) => {
+                    measurement.points[measurement.points.length - 1] = latlng;
+                    renderRulerMeasurements();
+                }).addTo(handleGroup);
+            }
+        }
+    };
+
+    state.ruler.measurements.forEach((measurement) => {
+        renderMeasurement(measurement, false);
+    });
+
+    if (state.ruler.currentPoints.length > 0) {
+        renderMeasurement({ id: 'current-ruler-measurement', points: state.ruler.currentPoints }, true);
+    }
+}
+
+function updateRulerControls() {
+    if (!toggleRulerBtn) return;
+    toggleRulerBtn.classList.toggle('active-tool', state.ruler.active);
+    toggleRulerBtn.setAttribute('aria-pressed', String(state.ruler.active));
+    toggleRulerBtn.textContent = state.ruler.active ? 'Ruler On' : 'Ruler';
+}
+
+function finalizeRulerMeasurement() {
+    if (state.ruler.currentPoints.length >= 2) {
+        const measurement = {
+            id: `ruler-${Date.now()}`,
+            points: [...state.ruler.currentPoints]
+        };
+        state.ruler.measurements.push(measurement);
+        state.ruler.selectedId = measurement.id;
+    }
+    state.ruler.currentPoints = [];
+    state.ruler.active = false;
+    updateRulerControls();
+    renderRulerMeasurements();
+}
+
+function getTextAnnotationDraft() {
+    return {
+        text: textAnnotationInput?.value.trim() || '',
+        fontFamily: textAnnotationFont?.value || 'Outfit, sans-serif',
+        fontSize: Number(textAnnotationSize?.value || 20),
+        color: textAnnotationColor?.value || '#ffffff',
+        opacity: Number(textAnnotationOpacity?.value || 1),
+        useBackground: Boolean(textAnnotationUseBackground?.checked),
+        backgroundColor: textAnnotationBgColor?.value || '#ef4444',
+        backgroundOpacity: Number(textAnnotationBgOpacity?.value || 0.9)
+    };
+}
+
+function getSelectedTextAnnotation() {
+    return state.textAnnotations.find((annotation) => annotation.id === state.textTool.selectedId) || null;
+}
+
+function applyTextAnnotationDraftToControls(annotation) {
+    if (!annotation) return;
+    if (textAnnotationInput) textAnnotationInput.value = annotation.text || '';
+    if (textAnnotationFont) textAnnotationFont.value = annotation.fontFamily || 'Outfit, sans-serif';
+    if (textAnnotationSize) textAnnotationSize.value = String(annotation.fontSize || 20);
+    if (textAnnotationColor) textAnnotationColor.value = annotation.color || '#ffffff';
+    if (textAnnotationOpacity) textAnnotationOpacity.value = String(annotation.opacity ?? 1);
+    if (textAnnotationUseBackground) textAnnotationUseBackground.checked = Boolean(annotation.useBackground);
+    if (textAnnotationBgColor) textAnnotationBgColor.value = annotation.backgroundColor || '#ef4444';
+    if (textAnnotationBgOpacity) textAnnotationBgOpacity.value = String(annotation.backgroundOpacity ?? 0.9);
+}
+
+function createTextAnnotationMarker(annotation, isSelected = false) {
+    const background = annotation.useBackground
+        ? `background:${hexToRgba(annotation.backgroundColor, annotation.backgroundOpacity)}; border: 1px solid rgba(255,255,255,0.16); padding:0.2rem 0.55rem; border-radius:999px;`
+        : 'background:transparent; padding:0;';
+
+    const marker = L.marker(annotation.latlng, {
+        icon: L.divIcon({
+            className: `text-annotation-marker${isSelected ? ' text-annotation-marker--selected' : ''}`,
+            html: `
+                <div class="text-annotation-marker__inner" style="
+                    color:${escapeHtml(annotation.color)};
+                    opacity:${annotation.opacity};
+                    font-family:${escapeHtml(annotation.fontFamily)};
+                    font-size:${annotation.fontSize}px;
+                    ${background}
+                ">${escapeHtml(annotation.text)}</div>
+            `,
+            iconSize: [0, 0],
+            iconAnchor: [0, 0]
+        })
+    });
+
+    marker.on('click', (event) => {
+        L.DomEvent.stopPropagation(event);
+        state.textTool.selectedId = annotation.id;
+        state.textTool.placing = false;
+        applyTextAnnotationDraftToControls(annotation);
+        updateTextToolControls();
+        renderTextAnnotations();
+        openTextToolPopover();
+    });
+
+    return marker;
+}
+
+function renderTextAnnotations() {
+    const group = state.mapLayerGroups.textAnnotations;
+    group.clearLayers();
+
+    state.textAnnotations.forEach((annotation) => {
+        createTextAnnotationMarker(annotation, annotation.id === state.textTool.selectedId).addTo(group);
+    });
+}
+
+function updateTextToolControls() {
+    if (!toggleTextToolBtn) return;
+    toggleTextToolBtn.classList.toggle('active-tool', state.textTool.placing);
+    if (placeTextAnnotationBtn) {
+        placeTextAnnotationBtn.textContent = state.textTool.placing
+            ? 'Click On Map...'
+            : (state.textTool.selectedId ? 'Save Changes' : 'Place On Map');
+    }
+    if (removeTextAnnotationBtn) removeTextAnnotationBtn.disabled = !state.textTool.selectedId;
+}
+
+function getSelectedDrawingAnnotation() {
+    return state.draw.annotations.find((annotation) => annotation.id === state.draw.selectedId) || null;
+}
+
+function getDrawStyleTarget() {
+    return getSelectedDrawingAnnotation()?.style || state.draw.defaultStyle;
+}
+
+function updateDrawToolControls() {
+    const styleTarget = getDrawStyleTarget();
+
+    if (toggleDrawToolBtn) {
+        const isActive = Boolean(state.draw.mode);
+        toggleDrawToolBtn.classList.toggle('active-tool', isActive);
+        toggleDrawToolBtn.textContent = state.draw.mode ? `Draw: ${state.draw.mode}` : 'Draw';
+    }
+
+    const modeButtons = {
+        dot: drawModeDotBtn,
+        line: drawModeLineBtn,
+        arrow: drawModeArrowBtn,
+        rectangle: drawModeRectangleBtn,
+        circle: drawModeCircleBtn
+    };
+
+    Object.entries(modeButtons).forEach(([mode, button]) => {
+        if (!button) return;
+        button.classList.toggle('active-tool', state.draw.mode === mode);
+    });
+
+    if (drawStrokeColor) drawStrokeColor.value = styleTarget.color;
+    if (drawStrokeWidth) drawStrokeWidth.value = String(styleTarget.width);
+    if (drawStrokeOpacity) drawStrokeOpacity.value = String(styleTarget.opacity);
+    if (drawFillOpacity) drawFillOpacity.value = String(styleTarget.fillOpacity);
+    if (drawDashedStroke) drawDashedStroke.checked = Boolean(styleTarget.dashed);
+    if (removeSelectedDrawingBtn) removeSelectedDrawingBtn.disabled = !state.draw.selectedId;
+
+    if (drawToolHint) {
+        if (state.draw.mode === 'dot') {
+            drawToolHint.textContent = 'Dot mode: click once on the map to place a dot.';
+        } else if (state.draw.mode) {
+            drawToolHint.textContent = `${state.draw.mode[0].toUpperCase()}${state.draw.mode.slice(1)} mode: click and drag on the map to draw. Select an existing line or shape to edit it.`;
+        } else if (state.draw.selectedId) {
+            drawToolHint.textContent = 'A drawing is selected. Drag its blue handles to edit its geometry, or change its style here.';
+        } else {
+            drawToolHint.textContent = 'Choose a mode, then draw on the map. Lines, arrows, rectangles, and circles use click-drag. Dots place on click.';
+        }
+    }
+}
+
+function createDrawingAnnotation(type, style, startLatLng, endLatLng = startLatLng) {
+    return {
+        id: `drawing-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        type,
+        start: startLatLng,
+        end: endLatLng,
+        style: { ...style }
+    };
+}
+
+function getDrawDashArray(annotation) {
+    return annotation.style.dashed ? '10 6' : null;
+}
+
+function getArrowHeadLatLngs(start, end, widthPx = 4) {
+    const endPoint = map.latLngToContainerPoint(end);
+    const startPoint = map.latLngToContainerPoint(start);
+    const dx = endPoint.x - startPoint.x;
+    const dy = endPoint.y - startPoint.y;
+    const length = Math.hypot(dx, dy);
+    if (length < 1) {
+        return [end, end, end];
+    }
+
+    const ux = dx / length;
+    const uy = dy / length;
+    const headLength = Math.max(12, widthPx * 4);
+    const headWidth = Math.max(8, widthPx * 2.4);
+
+    const leftPoint = L.point(
+        endPoint.x - ux * headLength - uy * headWidth * 0.5,
+        endPoint.y - uy * headLength + ux * headWidth * 0.5
+    );
+    const rightPoint = L.point(
+        endPoint.x - ux * headLength + uy * headWidth * 0.5,
+        endPoint.y - uy * headLength - ux * headWidth * 0.5
+    );
+
+    return [
+        map.containerPointToLatLng(leftPoint),
+        end,
+        map.containerPointToLatLng(rightPoint)
+    ];
+}
+
+function createDrawingHandle(latlng, onDrag) {
+    const marker = L.marker(latlng, {
+        draggable: true,
+        icon: L.divIcon({
+            className: 'drawing-handle',
+            html: '<span class="drawing-handle__dot"></span>',
+            iconSize: [0, 0],
+            iconAnchor: [0, 0]
+        })
+    });
+    marker.on('drag', (event) => {
+        onDrag(event.target.getLatLng());
+    });
+    return marker;
+}
+
+function bindDrawingSelection(layer, annotation) {
+    layer.on('click', (event) => {
+        L.DomEvent.stopPropagation(event);
+        state.draw.selectedId = annotation.id;
+        updateDrawToolControls();
+        renderDrawAnnotations();
+        openDrawToolPopover();
+    });
+    return layer;
+}
+
+function createCircleFromAnnotation(annotation, isSelected) {
+    const radiusMeters = map.distance(annotation.start, annotation.end);
+    return bindDrawingSelection(L.circle(annotation.start, {
+        radius: radiusMeters,
+        color: annotation.style.color,
+        weight: annotation.style.width,
+        opacity: annotation.style.opacity,
+        fillColor: annotation.style.color,
+        fillOpacity: annotation.style.fillOpacity,
+        dashArray: getDrawDashArray(annotation)
+    }), annotation);
+}
+
+function createRectangleFromAnnotation(annotation, isSelected) {
+    return bindDrawingSelection(L.rectangle(L.latLngBounds(annotation.start, annotation.end), {
+        color: annotation.style.color,
+        weight: annotation.style.width,
+        opacity: annotation.style.opacity,
+        fillColor: annotation.style.color,
+        fillOpacity: annotation.style.fillOpacity,
+        dashArray: getDrawDashArray(annotation)
+    }), annotation);
+}
+
+function createLineLikeDrawing(annotation, isSelected) {
+    const layers = [];
+    const latlngs = [annotation.start, annotation.end];
+
+    layers.push(bindDrawingSelection(L.polyline(latlngs, {
+        color: annotation.style.color,
+        weight: annotation.style.width,
+        opacity: annotation.style.opacity,
+        dashArray: getDrawDashArray(annotation)
+    }), annotation));
+
+    if (annotation.type === 'arrow') {
+        layers.push(bindDrawingSelection(L.polygon(getArrowHeadLatLngs(annotation.start, annotation.end, annotation.style.width), {
+            color: annotation.style.color,
+            weight: Math.max(1, annotation.style.width * 0.4),
+            opacity: annotation.style.opacity,
+            fillColor: annotation.style.color,
+            fillOpacity: annotation.style.opacity,
+            dashArray: getDrawDashArray(annotation)
+        }), annotation));
+    }
+
+    return layers;
+}
+
+function createDotDrawing(annotation, isSelected) {
+    return bindDrawingSelection(L.circleMarker(annotation.start, {
+        renderer: siteBddCanvasRenderer,
+        radius: annotation.style.width,
+        weight: Math.max(1, annotation.style.width * 0.3),
+        color: annotation.style.color,
+        opacity: annotation.style.opacity,
+        fillColor: annotation.style.color,
+        fillOpacity: annotation.style.fillOpacity
+    }), annotation);
+}
+
+function renderDrawAnnotations() {
+    const drawingGroup = state.mapLayerGroups.drawings;
+    const handleGroup = state.mapLayerGroups.drawingHandles;
+    drawingGroup.clearLayers();
+    handleGroup.clearLayers();
+
+    state.draw.annotations.forEach((annotation) => {
+        const isSelected = annotation.id === state.draw.selectedId;
+        if (annotation.type === 'dot') {
+            createDotDrawing(annotation, isSelected).addTo(drawingGroup);
+        } else if (annotation.type === 'rectangle') {
+            createRectangleFromAnnotation(annotation, isSelected).addTo(drawingGroup);
+        } else if (annotation.type === 'circle') {
+            createCircleFromAnnotation(annotation, isSelected).addTo(drawingGroup);
+        } else {
+            createLineLikeDrawing(annotation, isSelected).forEach((layer) => layer.addTo(drawingGroup));
+        }
+
+        if (isSelected && annotation.type !== 'dot') {
+            createDrawingHandle(annotation.start, (latlng) => {
+                annotation.start = latlng;
+                renderDrawAnnotations();
+            }).addTo(handleGroup);
+            createDrawingHandle(annotation.end, (latlng) => {
+                annotation.end = latlng;
+                renderDrawAnnotations();
+            }).addTo(handleGroup);
+        }
+
+        if (isSelected && annotation.type === 'dot') {
+            createDrawingHandle(annotation.start, (latlng) => {
+                annotation.start = latlng;
+                annotation.end = latlng;
+                renderDrawAnnotations();
+            }).addTo(handleGroup);
+        }
+    });
+
+    if (state.draw.activeDraft) {
+        const draft = state.draw.activeDraft;
+        if (draft.type === 'dot') {
+            createDotDrawing(draft, false).addTo(drawingGroup);
+        } else if (draft.type === 'rectangle') {
+            createRectangleFromAnnotation(draft, false).addTo(drawingGroup);
+        } else if (draft.type === 'circle') {
+            createCircleFromAnnotation(draft, false).addTo(drawingGroup);
+        } else {
+            createLineLikeDrawing(draft, false).forEach((layer) => layer.addTo(drawingGroup));
+        }
+    }
+}
+
+function syncDrawStyleFromControls() {
+    const target = getDrawStyleTarget();
+    if (!target) return;
+
+    target.color = drawStrokeColor?.value || target.color;
+    target.width = Number(drawStrokeWidth?.value || target.width);
+    target.opacity = Number(drawStrokeOpacity?.value || target.opacity);
+    target.fillOpacity = Number(drawFillOpacity?.value || target.fillOpacity);
+    target.dashed = Boolean(drawDashedStroke?.checked);
+}
+
+function setDrawMode(mode) {
+    state.ruler.active = false;
+    state.ruler.currentPoints = [];
+    state.ruler.selectedId = null;
+    updateRulerControls();
+    renderRulerMeasurements();
+    state.textTool.placing = false;
+    state.textTool.selectedId = null;
+    updateTextToolControls();
+    renderTextAnnotations();
+
+    state.draw.mode = state.draw.mode === mode ? null : mode;
+    state.draw.activeDraft = null;
+    updateDrawToolControls();
+    renderDrawAnnotations();
+}
+
+function finalizeActiveDrawing() {
+    if (!state.draw.activeDraft) return;
+
+    const draft = state.draw.activeDraft;
+    state.draw.activeDraft = null;
+
+    const distanceMeters = map.distance(draft.start, draft.end);
+    if (draft.type !== 'dot' && distanceMeters < 1) {
+        if (!map.dragging.enabled()) {
+            map.dragging.enable();
+        }
+        renderDrawAnnotations();
+        return;
+    }
+
+    state.draw.annotations.push(draft);
+    state.draw.selectedId = draft.id;
+    if (!map.dragging.enabled()) {
+        map.dragging.enable();
+    }
+    updateDrawToolControls();
+    renderDrawAnnotations();
+}
+
+function shouldIgnoreRulerPointerTarget(target) {
+    if (!(target instanceof Element)) {
+        return false;
+    }
+
+    return Boolean(target.closest('.leaflet-control, .leaflet-popup, .leaflet-tooltip'));
+}
+
+function addRulerPointFromMouseEvent(event) {
+    if (!state.ruler.active || event.button !== 0 || shouldIgnoreRulerPointerTarget(event.target)) {
+        return;
+    }
+
+    const mapContainer = map.getContainer();
+    const rect = mapContainer.getBoundingClientRect();
+    const containerPoint = L.point(
+        event.clientX - rect.left,
+        event.clientY - rect.top
+    );
+    const latlng = map.containerPointToLatLng(containerPoint);
+    state.ruler.currentPoints.push(latlng);
+    renderRulerMeasurements();
+    event.preventDefault();
+    event.stopPropagation();
+}
+
 function createPointMarker(point, popupHtml) {
+    if (isManualAddedPoint(point)) {
+        return createManualSiteMarker({
+            ...point,
+            name: point.displayName || point.original?.['Site Name'] || point.id
+        }).bindPopup(popupHtml);
+    }
+
     const networkLabel = getNetworkBadgeLabel(point);
     const marker = L.marker([point.lat, point.lng], {
         icon: L.divIcon({
@@ -2545,7 +4780,15 @@ function renderVisiblePointMarkers() {
     }
 
     const bounds = map.getBounds().pad(0.2);
-    const visiblePoints = state.filteredPoints.filter((point) => bounds.contains([point.lat, point.lng]));
+    const visiblePoints = state.filteredPoints.filter((point) => {
+        if (!bounds.contains([point.lat, point.lng])) {
+            return false;
+        }
+        if (isManualAddedPoint(point)) {
+            return false;
+        }
+        return state.visibleNetworkBadges.has(getNetworkBadgeLabel(point));
+    });
 
     visiblePoints.forEach((point) => {
         createPointMarker(point, buildPointPopupHtml(point)).addTo(state.mapLayerGroups.points);
@@ -2699,22 +4942,26 @@ function focusPointOnMap(point, { zoom = 15, highlight = true } = {}) {
     const focusCoords = [[point.lat, point.lng]];
 
     if (Number.isFinite(point.localityReferenceLat) && Number.isFinite(point.localityReferenceLng)) {
-        addFocusCircle(
-            point.localityReferenceLat,
-            point.localityReferenceLng,
-            `Matched Localite: ${point.localityReferenceName || 'Reference place'}`,
-            '#10b981'
-        );
+        if (filterFocusCircles?.checked) {
+            addFocusCircle(
+                point.localityReferenceLat,
+                point.localityReferenceLng,
+                `Matched Localite: ${point.localityReferenceName || 'Reference place'}`,
+                '#10b981'
+            );
+        }
         focusCoords.push([point.localityReferenceLat, point.localityReferenceLng]);
     }
 
     if (Number.isFinite(point.nearestPlaceLat) && Number.isFinite(point.nearestPlaceLng)) {
-        addFocusCircle(
-            point.nearestPlaceLat,
-            point.nearestPlaceLng,
-            `Nearest Place: ${point.nearestPlaceName || 'Nearest place'}`,
-            '#f59e0b'
-        );
+        if (filterFocusCircles?.checked) {
+            addFocusCircle(
+                point.nearestPlaceLat,
+                point.nearestPlaceLng,
+                `Nearest Place: ${point.nearestPlaceName || 'Nearest place'}`,
+                '#f59e0b'
+            );
+        }
         focusCoords.push([point.nearestPlaceLat, point.nearestPlaceLng]);
     }
 
@@ -2904,6 +5151,7 @@ function finishAnalysis(analysisResult) {
     state.comparisonReport = comparisonReport;
     updateStats(state.points.length, matchedCount, emptySSCount);
     renderTable();
+    renderManualSites();
     renderComparisonReport();
     renderRegions();
     renderDRs();
@@ -2912,10 +5160,6 @@ function finishAnalysis(analysisResult) {
     updateStatus(false);
     filtersCard.style.display = 'block';
 
-    if (state.points.length > 0) {
-        const bounds = L.latLngBounds(state.points.map(p => [p.lat, p.lng]));
-        map.fitBounds(bounds, { padding: [50, 50] });
-    }
     exportBtn.disabled = false;
     exportDisplayedBtn.disabled = false;
 }
@@ -2934,33 +5178,13 @@ function updateStats(total, matched, emptySS) {
 }
 
 function updateLegend() {
+    if (!drLegend) return;
+
     drLegend.innerHTML = '';
     let hasContent = false;
 
-    if (toggleRegions.checked) {
-        hasContent = true;
-        const section = document.createElement('div');
-        const title = document.createElement('h4');
-        title.textContent = 'Regions';
-        section.appendChild(title);
-        drLegend.appendChild(section);
-
-        Object.keys(state.regionColors).forEach(name => {
-            const color = state.regionColors[name];
-            const item = document.createElement('div');
-            item.className = 'legend-item';
-            const swatch = document.createElement('div');
-            swatch.className = 'legend-color';
-            swatch.style.background = color;
-            const label = document.createElement('span');
-            label.textContent = name;
-            item.appendChild(swatch);
-            item.appendChild(label);
-            drLegend.appendChild(item);
-        });
-    }
-
-    if (toggleDRs.checked) {
+    const appendSection = (titleText, items) => {
+        if (!items.length) return;
         if (hasContent) {
             const separator = document.createElement('hr');
             separator.style.margin = '10px 0';
@@ -2968,26 +5192,60 @@ function updateLegend() {
             separator.style.borderTop = '1px solid rgba(255,255,255,0.1)';
             drLegend.appendChild(separator);
         }
+
         hasContent = true;
         const section = document.createElement('div');
         const title = document.createElement('h4');
-        title.textContent = 'Directions Régionales';
+        title.textContent = titleText;
         section.appendChild(title);
         drLegend.appendChild(section);
 
-        Object.keys(state.drColors).forEach(name => {
-            const color = state.drColors[name];
+        items.forEach(({ color, label }) => {
             const item = document.createElement('div');
             item.className = 'legend-item';
             const swatch = document.createElement('div');
             swatch.className = 'legend-color';
             swatch.style.background = color;
-            const label = document.createElement('span');
-            label.textContent = name;
+            const text = document.createElement('span');
+            text.textContent = label;
             item.appendChild(swatch);
-            item.appendChild(label);
+            item.appendChild(text);
             drLegend.appendChild(item);
         });
+    };
+
+    if (toggleRegions?.checked) {
+        appendSection('Regions', Object.keys(state.regionColors).map((name) => ({
+            color: state.regionColors[name],
+            label: name
+        })));
+    }
+
+    if (toggleDRs?.checked) {
+        appendSection('Directions Régionales', Object.keys(state.drColors).map((name) => ({
+            color: state.drColors[name],
+            label: name
+        })));
+    }
+
+    if (state.siteBdd.imported) {
+        const visibleSiteBdds = getSiteBddRenderOrder()
+            .filter((tech) => state.siteBdd.datasets[tech].visible)
+            .map((tech) => ({
+                color: state.siteBdd.datasets[tech].color,
+                label: state.siteBdd.datasets[tech].label
+            }));
+        appendSection(state.siteBdd.legendName || 'Sites IAM', visibleSiteBdds);
+    }
+
+    if (state.customSiteOverlays.length) {
+        const visibleCustomOverlays = state.customSiteOverlays
+            .filter((overlay) => overlay.visible)
+            .map((overlay) => ({
+                color: overlay.color,
+                label: (overlay.legendName || overlay.label || 'Overlay').trim() || overlay.label || 'Overlay'
+            }));
+        appendSection('KML / KMZ Overlays', visibleCustomOverlays);
     }
 
     drLegend.style.display = hasContent ? 'block' : 'none';
@@ -3024,13 +5282,523 @@ filterHighRisk.addEventListener('change', () => {
     renderTable();
 });
 
+filterFocusCircles?.addEventListener('change', () => {
+    if (state.activePointId) {
+        const point = state.processedPoints.find(p => p.id === state.activePointId);
+        if (point) {
+            clearFocusOverlays();
+            if (filterFocusCircles.checked) {
+                if (Number.isFinite(point.localityReferenceLat) && Number.isFinite(point.localityReferenceLng)) {
+                    addFocusCircle(
+                        point.localityReferenceLat,
+                        point.localityReferenceLng,
+                        `Matched Localite: ${point.localityReferenceName || 'Reference place'}`,
+                        '#10b981'
+                    );
+                }
+                if (Number.isFinite(point.nearestPlaceLat) && Number.isFinite(point.nearestPlaceLng)) {
+                    addFocusCircle(
+                        point.nearestPlaceLat,
+                        point.nearestPlaceLng,
+                        `Nearest Place: ${point.nearestPlaceName || 'Nearest place'}`,
+                        '#f59e0b'
+                    );
+                }
+            }
+        }
+    }
+});
+
 clearAuditFilterBtn.addEventListener('click', () => {
     clearAuditFilter();
 });
 
+toggleBadgesBtn?.addEventListener('click', (event) => {
+    event.stopPropagation();
+    if (!badgeFilterPopover) return;
+    if (badgeFilterPopover.hasAttribute('hidden')) {
+        openBadgeFilterPopover();
+    } else {
+        closeBadgeFilterPopover();
+    }
+});
+
+badgeFilterPopover?.addEventListener('click', (event) => {
+    event.stopPropagation();
+});
+
+badgeFilterPopoverHeader?.addEventListener('mousedown', (event) => {
+    if (!badgeFilterPopover) return;
+    event.preventDefault();
+
+    const rect = badgeFilterPopover.getBoundingClientRect();
+    badgePopoverDragState = {
+        offsetX: event.clientX - rect.left,
+        offsetY: event.clientY - rect.top
+    };
+});
+
+toggleRulerBtn?.addEventListener('click', () => {
+    if (state.ruler.active) {
+        finalizeRulerMeasurement();
+        return;
+    }
+    state.draw.mode = null;
+    state.draw.activeDraft = null;
+    state.draw.selectedId = null;
+    updateDrawToolControls();
+    renderDrawAnnotations();
+    state.textTool.placing = false;
+    state.textTool.selectedId = null;
+    updateTextToolControls();
+    renderTextAnnotations();
+    state.ruler.active = true;
+    state.ruler.currentPoints = [];
+    state.ruler.selectedId = null;
+    updateRulerControls();
+    renderRulerMeasurements();
+});
+
+clearRulerBtn?.addEventListener('click', () => {
+    state.ruler.active = false;
+    state.ruler.currentPoints = [];
+    state.ruler.selectedId = null;
+    state.ruler.measurements = [];
+    updateRulerControls();
+    renderRulerMeasurements();
+});
+
+toggleTextToolBtn?.addEventListener('click', (event) => {
+    event.stopPropagation();
+    state.draw.mode = null;
+    state.draw.activeDraft = null;
+    updateDrawToolControls();
+    renderDrawAnnotations();
+    if (!textToolPopover) return;
+    if (textToolPopover.hasAttribute('hidden')) {
+        openTextToolPopover();
+    } else {
+        closeTextToolPopover();
+    }
+});
+
+textToolPopover?.addEventListener('click', (event) => {
+    event.stopPropagation();
+});
+
+textToolPopoverHeader?.addEventListener('mousedown', (event) => {
+    if (!textToolPopover) return;
+    event.preventDefault();
+
+    const rect = textToolPopover.getBoundingClientRect();
+    textPopoverDragState = {
+        offsetX: event.clientX - rect.left,
+        offsetY: event.clientY - rect.top
+    };
+});
+
+placeTextAnnotationBtn?.addEventListener('click', () => {
+    if (!textAnnotationInput?.value.trim()) {
+        alert('Please enter some text first.');
+        return;
+    }
+
+    const selectedAnnotation = getSelectedTextAnnotation();
+    if (selectedAnnotation && !state.textTool.placing) {
+        Object.assign(selectedAnnotation, getTextAnnotationDraft());
+        updateTextToolControls();
+        renderTextAnnotations();
+        return;
+    }
+
+    state.draw.mode = null;
+    state.draw.activeDraft = null;
+    state.draw.selectedId = null;
+    updateDrawToolControls();
+    renderDrawAnnotations();
+    state.ruler.active = false;
+    state.ruler.currentPoints = [];
+    state.ruler.selectedId = null;
+    updateRulerControls();
+    renderRulerMeasurements();
+    state.textTool.selectedId = null;
+    state.textTool.placing = true;
+    updateTextToolControls();
+});
+
+removeTextAnnotationBtn?.addEventListener('click', () => {
+    if (!state.textTool.selectedId) return;
+    state.textAnnotations = state.textAnnotations.filter((annotation) => annotation.id !== state.textTool.selectedId);
+    state.textTool.selectedId = null;
+    state.textTool.placing = false;
+    updateTextToolControls();
+    renderTextAnnotations();
+});
+
+clearTextAnnotationsBtn?.addEventListener('click', () => {
+    state.textTool.placing = false;
+    state.textTool.selectedId = null;
+    updateTextToolControls();
+    state.textAnnotations = [];
+    renderTextAnnotations();
+});
+
+toggleDrawToolBtn?.addEventListener('click', (event) => {
+    event.stopPropagation();
+    if (!drawToolPopover) return;
+    if (drawToolPopover.hasAttribute('hidden')) {
+        openDrawToolPopover();
+    } else {
+        closeDrawToolPopover();
+    }
+});
+
+drawToolPopover?.addEventListener('click', (event) => {
+    event.stopPropagation();
+});
+
+drawToolPopoverHeader?.addEventListener('mousedown', (event) => {
+    if (!drawToolPopover) return;
+    event.preventDefault();
+    const rect = drawToolPopover.getBoundingClientRect();
+    drawPopoverDragState = {
+        offsetX: event.clientX - rect.left,
+        offsetY: event.clientY - rect.top
+    };
+});
+
+drLegend?.addEventListener('mousedown', (event) => {
+    event.preventDefault();
+    legendDragState = {
+        startX: event.clientX,
+        startY: event.clientY,
+        startLeft: drLegend.offsetLeft,
+        startTop: drLegend.offsetTop
+    };
+});
+
+drawModeDotBtn?.addEventListener('click', () => setDrawMode('dot'));
+drawModeLineBtn?.addEventListener('click', () => setDrawMode('line'));
+drawModeArrowBtn?.addEventListener('click', () => setDrawMode('arrow'));
+drawModeRectangleBtn?.addEventListener('click', () => setDrawMode('rectangle'));
+drawModeCircleBtn?.addEventListener('click', () => setDrawMode('circle'));
+
+[drawStrokeColor, drawStrokeWidth, drawStrokeOpacity, drawFillOpacity, drawDashedStroke].forEach((control) => {
+    control?.addEventListener('input', () => {
+        syncDrawStyleFromControls();
+        updateDrawToolControls();
+        renderDrawAnnotations();
+    });
+});
+
+stopDrawingBtn?.addEventListener('click', () => {
+    state.draw.mode = null;
+    state.draw.activeDraft = null;
+    updateDrawToolControls();
+    renderDrawAnnotations();
+});
+
+removeSelectedDrawingBtn?.addEventListener('click', () => {
+    if (!state.draw.selectedId) return;
+    state.draw.annotations = state.draw.annotations.filter((annotation) => annotation.id !== state.draw.selectedId);
+    state.draw.selectedId = null;
+    updateDrawToolControls();
+    renderDrawAnnotations();
+});
+
+clearDrawingsBtn?.addEventListener('click', () => {
+    state.draw.mode = null;
+    state.draw.activeDraft = null;
+    state.draw.selectedId = null;
+    state.draw.annotations = [];
+    updateDrawToolControls();
+    renderDrawAnnotations();
+});
+
+Object.entries(networkBadgeControls).forEach(([label, control]) => {
+    control?.addEventListener('change', (event) => {
+        if (event.target.checked) {
+            state.visibleNetworkBadges.add(label);
+        } else {
+            state.visibleNetworkBadges.delete(label);
+        }
+        updateNetworkBadgeControls();
+        schedulePointMarkerRender();
+    });
+});
+
+document.addEventListener('click', (event) => {
+    if (importMenuPopover && toggleImportMenuBtn && !importMenuPopover.hasAttribute('hidden')) {
+        if (!importMenuPopover.contains(event.target) && !toggleImportMenuBtn.contains(event.target)) {
+            closeImportMenuPopover();
+        }
+    }
+
+    if (badgeFilterPopover && toggleBadgesBtn && !badgeFilterPopover.hasAttribute('hidden')) {
+        if (!badgeFilterPopover.contains(event.target) && !toggleBadgesBtn.contains(event.target)) {
+            closeBadgeFilterPopover();
+        }
+    }
+
+    if (textToolPopover && toggleTextToolBtn && !textToolPopover.hasAttribute('hidden')) {
+        if (!textToolPopover.contains(event.target) && !toggleTextToolBtn.contains(event.target)) {
+            closeTextToolPopover();
+        }
+    }
+
+    if (drawToolPopover && toggleDrawToolBtn && !drawToolPopover.hasAttribute('hidden')) {
+        if (!drawToolPopover.contains(event.target) && !toggleDrawToolBtn.contains(event.target)) {
+            closeDrawToolPopover();
+        }
+    }
+});
+
+document.addEventListener('mousemove', (event) => {
+    if (badgePopoverDragState) {
+        applyBadgePopoverPosition(
+            event.clientX - badgePopoverDragState.offsetX,
+            event.clientY - badgePopoverDragState.offsetY
+        );
+    }
+
+    if (textPopoverDragState) {
+        applyTextPopoverPosition(
+            event.clientX - textPopoverDragState.offsetX,
+            event.clientY - textPopoverDragState.offsetY
+        );
+    }
+
+    if (drawPopoverDragState) {
+        applyDrawPopoverPosition(
+            event.clientX - drawPopoverDragState.offsetX,
+            event.clientY - drawPopoverDragState.offsetY
+        );
+    }
+
+    if (legendDragState) {
+        applyLegendPosition(
+            legendDragState.startLeft + (event.clientX - legendDragState.startX),
+            legendDragState.startTop + (event.clientY - legendDragState.startY)
+        );
+    }
+});
+
+document.addEventListener('mouseup', () => {
+    badgePopoverDragState = null;
+    textPopoverDragState = null;
+    drawPopoverDragState = null;
+    legendDragState = null;
+    finalizeActiveDrawing();
+});
+
+document.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape') return;
+
+    if (state.textTool.placing) {
+        state.textTool.placing = false;
+        updateTextToolControls();
+    }
+
+    if (state.ruler.active) {
+        finalizeRulerMeasurement();
+    }
+
+    if (state.draw.activeDraft) {
+        state.draw.activeDraft = null;
+        if (!map.dragging.enabled()) {
+            map.dragging.enable();
+        }
+        updateDrawToolControls();
+        renderDrawAnnotations();
+    }
+});
+
+window.addEventListener('resize', () => {
+    if (badgePopoverPosition && badgeFilterPopover && !badgeFilterPopover.hasAttribute('hidden')) {
+        applyBadgePopoverPosition(badgePopoverPosition.left, badgePopoverPosition.top);
+    }
+    if (textPopoverPosition && textToolPopover && !textToolPopover.hasAttribute('hidden')) {
+        applyTextPopoverPosition(textPopoverPosition.left, textPopoverPosition.top);
+    }
+    if (drawPopoverPosition && drawToolPopover && !drawToolPopover.hasAttribute('hidden')) {
+        applyDrawPopoverPosition(drawPopoverPosition.left, drawPopoverPosition.top);
+    }
+    if (legendPosition && drLegend && drLegend.style.display !== 'none') {
+        applyLegendPosition(legendPosition.left, legendPosition.top);
+    }
+});
+
+Object.entries(siteBddControls).forEach(([tech, controls]) => {
+    controls.toggle?.addEventListener('change', (event) => {
+        state.siteBdd.datasets[tech].visible = event.target.checked;
+        renderSiteBddLayers();
+    });
+
+    controls.moveUp?.addEventListener('click', () => {
+        moveSiteBddLayer(tech, -1);
+    });
+
+    controls.moveDown?.addEventListener('click', () => {
+        moveSiteBddLayer(tech, 1);
+    });
+
+    controls.settingsToggle?.addEventListener('click', () => {
+        state.siteBdd.datasets[tech].settingsOpen = !state.siteBdd.datasets[tech].settingsOpen;
+        updateSiteBddControls();
+    });
+
+    controls.color?.addEventListener('input', (event) => {
+        state.siteBdd.datasets[tech].color = event.target.value;
+        renderSiteBddLayers();
+    });
+
+    controls.showNames?.addEventListener('change', (event) => {
+        state.siteBdd.datasets[tech].showSiteNames = event.target.checked;
+        renderSiteBddLayers();
+    });
+
+    controls.siteSizeInput?.addEventListener('input', (event) => {
+        state.siteBdd.datasets[tech].settings.siteRadius = Number(event.target.value);
+        updateSiteBddRenderControlLabels(tech);
+        renderSiteBddLayers();
+    });
+
+    controls.siteOpacityInput?.addEventListener('input', (event) => {
+        state.siteBdd.datasets[tech].settings.siteOpacity = Number(event.target.value);
+        updateSiteBddRenderControlLabels(tech);
+        renderSiteBddLayers();
+    });
+
+    controls.sectorLengthInput?.addEventListener('input', (event) => {
+        state.siteBdd.datasets[tech].settings.sectorLengthKm = Number(event.target.value) / 1000;
+        updateSiteBddRenderControlLabels(tech);
+        renderSiteBddLayers();
+    });
+
+    controls.sectorWidthInput?.addEventListener('input', (event) => {
+        state.siteBdd.datasets[tech].settings.sectorHalfAngle = Number(event.target.value) / 2;
+        updateSiteBddRenderControlLabels(tech);
+        renderSiteBddLayers();
+    });
+
+    controls.sectorOpacityInput?.addEventListener('input', (event) => {
+        state.siteBdd.datasets[tech].settings.sectorOpacity = Number(event.target.value);
+        updateSiteBddRenderControlLabels(tech);
+        renderSiteBddLayers();
+    });
+
+    controls.labelTextColorInput?.addEventListener('input', (event) => {
+        state.siteBdd.datasets[tech].settings.labelTextColor = event.target.value;
+        renderSiteBddLayers();
+    });
+
+    controls.labelBackgroundColorInput?.addEventListener('input', (event) => {
+        state.siteBdd.datasets[tech].settings.labelBackgroundColor = event.target.value;
+        renderSiteBddLayers();
+    });
+
+    controls.labelBackgroundOpacityInput?.addEventListener('input', (event) => {
+        state.siteBdd.datasets[tech].settings.labelBackgroundOpacity = Number(event.target.value);
+        updateSiteBddRenderControlLabels(tech);
+        renderSiteBddLayers();
+    });
+});
+
+bddModeSites?.addEventListener('change', (event) => {
+    if (!event.target.checked) return;
+    state.siteBdd.mode = 'sites';
+    renderSiteBddLayers();
+});
+
+bddModeSectors?.addEventListener('change', (event) => {
+    if (!event.target.checked) return;
+    state.siteBdd.mode = 'sectors';
+    renderSiteBddLayers();
+});
+
+siteBddLegendName?.addEventListener('input', (event) => {
+    state.siteBdd.legendName = event.target.value;
+    updateLegend();
+});
+
+globalSectorLengthScaleInput?.addEventListener('input', (event) => {
+    applyGlobalSectorLengthScale(Number(event.target.value));
+    updateSiteBddControls();
+    renderSiteBddLayers();
+});
+
 map.on('moveend zoomend', () => {
     schedulePointMarkerRender();
+    renderSiteBddLayers();
+    renderCustomSiteOverlays();
+    renderDrawAnnotations();
 });
+
+map.on('click', (event) => {
+    if (state.textTool.placing) {
+        const draft = getTextAnnotationDraft();
+        state.textAnnotations.push({
+            id: `text-${Date.now()}`,
+            latlng: event.latlng,
+            ...draft
+        });
+        state.textTool.placing = false;
+        state.textTool.selectedId = null;
+        updateTextToolControls();
+        renderTextAnnotations();
+        return;
+    }
+
+    if (state.draw.mode === 'dot') {
+        syncDrawStyleFromControls();
+        const annotation = createDrawingAnnotation('dot', state.draw.defaultStyle, event.latlng, event.latlng);
+        state.draw.annotations.push(annotation);
+        state.draw.selectedId = annotation.id;
+        updateDrawToolControls();
+        renderDrawAnnotations();
+        return;
+    }
+
+    if (!state.draw.mode) {
+        state.draw.selectedId = null;
+        updateDrawToolControls();
+        renderDrawAnnotations();
+    }
+
+    if (!state.textTool.placing && state.textTool.selectedId) {
+        state.textTool.selectedId = null;
+        updateTextToolControls();
+        renderTextAnnotations();
+    }
+
+    if (!state.ruler.active && state.ruler.selectedId) {
+        state.ruler.selectedId = null;
+        renderRulerMeasurements();
+    }
+});
+
+map.on('mousedown', (event) => {
+    if (!state.draw.mode || state.draw.mode === 'dot' || state.ruler.active || state.textTool.placing) {
+        return;
+    }
+
+    syncDrawStyleFromControls();
+    state.draw.activeDraft = createDrawingAnnotation(state.draw.mode, state.draw.defaultStyle, event.latlng, event.latlng);
+    map.dragging.disable();
+    renderDrawAnnotations();
+});
+
+map.on('mousemove', (event) => {
+    if (!state.draw.activeDraft) return;
+    state.draw.activeDraft.end = event.latlng;
+    renderDrawAnnotations();
+});
+
+map.on('mouseup', () => {
+    finalizeActiveDrawing();
+});
+
+map.getContainer().addEventListener('mousedown', addRulerPointFromMouseEvent, true);
 
 // --- Hierarchy State ---
 const hierarchy = {
@@ -3057,21 +5825,48 @@ const resetRegionBtn = document.getElementById('resetRegionBtn');
 
 function createListItem(name, type, isSelected, isVisible, count = null) {
     const div = document.createElement('div');
-    div.className = `list-item ${isSelected ? 'selected' : ''}`;
+    div.className = `list-item ${isSelected ? 'selected' : ''} ${isVisible ? 'visible' : ''}`;
 
-    const checkbox = document.createElement('input');
-    checkbox.type = 'checkbox';
-    checkbox.checked = isVisible;
-    checkbox.onclick = (e) => {
+    const label = document.createElement('span');
+    label.className = 'list-item-label';
+    label.textContent = name;
+
+    const meta = document.createElement('div');
+    meta.className = 'list-item-meta';
+
+    if (count != null) {
+        const countBadge = document.createElement('span');
+        countBadge.className = 'list-item-count';
+        countBadge.textContent = count;
+        meta.appendChild(countBadge);
+    }
+
+    const toggleBtn = document.createElement('button');
+    toggleBtn.type = 'button';
+    toggleBtn.className = `list-item-toggle ${isVisible ? 'active' : ''}`;
+    toggleBtn.title = isVisible ? `Hide ${name}` : `Show ${name}`;
+    toggleBtn.textContent = isVisible ? 'On' : 'Off';
+    toggleBtn.onclick = (e) => {
         e.stopPropagation();
-        toggleVisibility(type, name, checkbox.checked);
+        if (!isVisible) {
+            selectItem(type, name);
+        } else {
+            toggleVisibility(type, name, false);
+            if (type === 'region' && hierarchy.selectedRegion === name) hierarchy.selectedRegion = null;
+            if (type === 'dr' && hierarchy.selectedDR === name) hierarchy.selectedDR = null;
+            if (type === 'province' && hierarchy.selectedProvince === name) hierarchy.selectedProvince = null;
+            if (type === 'commune' && hierarchy.selectedCommune === name) hierarchy.selectedCommune = null;
+            renderRegions();
+            renderDRs();
+            renderProvinces();
+            renderCommunes();
+            renderTable();
+        }
     };
 
-    const label = document.createElement('label');
-    label.textContent = count == null ? name : `${name} (${count})`;
-
-    div.appendChild(checkbox);
+    meta.appendChild(toggleBtn);
     div.appendChild(label);
+    div.appendChild(meta);
 
     div.onclick = () => selectItem(type, name);
 
@@ -3309,6 +6104,7 @@ function updateMapVisibility(type) {
             }
         }).addTo(group);
     }
+    updateLegend();
 }
 
 resetRegionBtn.addEventListener('click', () => {
@@ -3513,13 +6309,23 @@ addSiteBtn.addEventListener('click', () => {
         return;
     }
 
+    const manualId = `manual-${Date.now()}`;
     const newPoint = {
-        id: name,
+        id: manualId,
+        displayName: name,
         lat: lat,
         lng: lng,
-        original: { 'Site Name': name, 'Latitude': lat, 'Longitude': lng } // Mock original data
+        isManualAdded: true,
+        original: { 'Site Name': name, 'Code': name, 'Latitude': lat, 'Longitude': lng, '__manualAdded': true } // Mock original data
     };
 
+    state.manualSites.push({
+        id: manualId,
+        name,
+        lat,
+        lng
+    });
+    renderManualSites();
     state.points.push(newPoint);
     updateStatus(true, "Processing new site...");
 
@@ -3534,9 +6340,10 @@ addSiteBtn.addEventListener('click', () => {
     setTimeout(() => {
         analyzePoints().then((result) => {
             if (!result) return;
-            const found = state.processedPoints.find(p => p.id === name);
+            const found = state.processedPoints.find(p => p.id === manualId);
             if (found) {
                 focusPointOnMap(found);
+                renderManualSites();
             }
         });
     }, 100);
@@ -3566,6 +6373,18 @@ if (wikimapiaApiKeyInput) {
 
 // Start
 updateWikimapiaKeyStatus();
+updateNetworkBadgeControls();
+updateDrawToolControls();
+updateRulerControls();
+updateTextToolControls();
+renderManualSites();
+renderDrawAnnotations();
+renderRulerMeasurements();
+renderTextAnnotations();
+updateSiteBddControls();
+updateCustomSiteOverlaySummary();
+renderCustomSiteOverlayControls();
+updateSiteBddHint('');
 loadGeoData();
 // --- Resize Logic ---
 const resizeHandle = document.getElementById('resizeHandle');

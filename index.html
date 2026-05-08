@@ -47,6 +47,147 @@
 
         <div class="nav-divider"></div>
 
+        <div class="import-menu-group">
+          <button id="toggleImportMenuBtn" class="btn secondary" type="button" aria-expanded="false" aria-controls="importMenuPopover">Import</button>
+          <div id="importMenuPopover" class="import-menu-popover" hidden>
+            <p class="import-menu-title">Quick Import</p>
+            <button id="importSitesMenuBtn" class="btn secondary import-menu-action" type="button">Import Sites</button>
+            <button id="importKmlMenuBtn" class="btn secondary import-menu-action" type="button">Import KML/KMZ</button>
+            <button id="importDataMenuBtn" class="btn secondary import-menu-action" type="button">Import Data</button>
+          </div>
+        </div>
+
+        <div class="badge-filter-group">
+          <button id="toggleBadgesBtn" class="btn secondary" type="button" aria-expanded="false" aria-controls="badgeFilterPopover">Badges</button>
+          <div id="badgeFilterPopover" class="badge-filter-popover" hidden>
+            <div id="badgeFilterPopoverHeader" class="badge-filter-header">
+              <p class="badge-filter-title">Show badges</p>
+              <span class="badge-filter-drag">Drag</span>
+            </div>
+            <label class="badge-filter-option">
+              <input type="checkbox" id="badgeFilter2G" checked />
+              <span>2G</span>
+            </label>
+            <label class="badge-filter-option">
+              <input type="checkbox" id="badgeFilter2G3G" checked />
+              <span>2G/3G</span>
+            </label>
+            <label class="badge-filter-option">
+              <input type="checkbox" id="badgeFilter2G3G4G" checked />
+              <span>2G/3G/4G</span>
+            </label>
+            <label class="badge-filter-option">
+              <input type="checkbox" id="badgeFilter2G3G4G5G" checked />
+              <span>2G/3G/4G/5G</span>
+            </label>
+            <label class="badge-filter-option">
+              <input type="checkbox" id="badgeFilterNC" checked />
+              <span>NC</span>
+            </label>
+          </div>
+        </div>
+
+        <button id="toggleRulerBtn" class="btn secondary" type="button" aria-pressed="false">Ruler</button>
+        <button id="clearRulerBtn" class="btn secondary" type="button">Clear Ruler</button>
+
+        <div class="draw-tool-group">
+          <button id="toggleDrawToolBtn" class="btn secondary" type="button" aria-expanded="false" aria-controls="drawToolPopover">Draw</button>
+          <div id="drawToolPopover" class="text-tool-popover draw-tool-popover" hidden>
+            <div id="drawToolPopoverHeader" class="text-tool-header">
+              <p class="text-tool-title">Draw</p>
+              <span class="text-tool-drag">Drag</span>
+            </div>
+            <div class="draw-tool-modes">
+              <button id="drawModeDotBtn" class="btn secondary" type="button">Dot</button>
+              <button id="drawModeLineBtn" class="btn secondary" type="button">Line</button>
+              <button id="drawModeArrowBtn" class="btn secondary" type="button">Arrow</button>
+              <button id="drawModeRectangleBtn" class="btn secondary" type="button">Rectangle</button>
+              <button id="drawModeCircleBtn" class="btn secondary" type="button">Circle</button>
+            </div>
+            <div class="text-tool-grid">
+              <label class="text-tool-field">
+                <span>Color</span>
+                <input id="drawStrokeColor" type="color" value="#22c55e" />
+              </label>
+              <label class="text-tool-field">
+                <span>Width / Size</span>
+                <input id="drawStrokeWidth" type="range" min="2" max="18" step="1" value="4" />
+              </label>
+              <label class="text-tool-field">
+                <span>Stroke opacity</span>
+                <input id="drawStrokeOpacity" type="range" min="0.1" max="1" step="0.05" value="0.95" />
+              </label>
+              <label class="text-tool-field">
+                <span>Fill opacity</span>
+                <input id="drawFillOpacity" type="range" min="0" max="1" step="0.05" value="0.2" />
+              </label>
+            </div>
+            <label class="text-tool-checkbox">
+              <input id="drawDashedStroke" type="checkbox" />
+              <span>Dashed stroke</span>
+            </label>
+            <p id="drawToolHint" class="small-note">Choose a mode, then draw on the map. Lines, arrows, rectangles, and circles use click-drag. Dots place on click.</p>
+            <div class="text-tool-actions">
+              <button id="stopDrawingBtn" class="btn secondary" type="button">Stop Drawing</button>
+              <button id="removeSelectedDrawingBtn" class="btn secondary" type="button">Remove Selected</button>
+              <button id="clearDrawingsBtn" class="btn secondary" type="button">Clear Drawings</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="text-tool-group">
+          <button id="toggleTextToolBtn" class="btn secondary" type="button" aria-expanded="false" aria-controls="textToolPopover">Text</button>
+          <div id="textToolPopover" class="text-tool-popover" hidden>
+            <div id="textToolPopoverHeader" class="text-tool-header">
+              <p class="text-tool-title">Text Annotation</p>
+              <span class="text-tool-drag">Drag</span>
+            </div>
+            <textarea id="textAnnotationInput" class="text-tool-textarea" rows="3" placeholder="Write your text..."></textarea>
+            <div class="text-tool-grid">
+              <label class="text-tool-field">
+                <span>Font</span>
+                <select id="textAnnotationFont">
+                  <option value="Outfit, sans-serif">Outfit</option>
+                  <option value="Arial, sans-serif">Arial</option>
+                  <option value="Georgia, serif">Georgia</option>
+                  <option value="'Courier New', monospace">Courier New</option>
+                </select>
+              </label>
+              <label class="text-tool-field">
+                <span>Size</span>
+                <input id="textAnnotationSize" type="range" min="12" max="40" step="1" value="20" />
+              </label>
+              <label class="text-tool-field">
+                <span>Text color</span>
+                <input id="textAnnotationColor" type="color" value="#ffffff" />
+              </label>
+              <label class="text-tool-field">
+                <span>Text opacity</span>
+                <input id="textAnnotationOpacity" type="range" min="0.1" max="1" step="0.05" value="1" />
+              </label>
+            </div>
+            <label class="text-tool-checkbox">
+              <input id="textAnnotationUseBackground" type="checkbox" checked />
+              <span>Use background</span>
+            </label>
+            <div class="text-tool-grid">
+              <label class="text-tool-field">
+                <span>Background</span>
+                <input id="textAnnotationBgColor" type="color" value="#ef4444" />
+              </label>
+              <label class="text-tool-field">
+                <span>Background opacity</span>
+                <input id="textAnnotationBgOpacity" type="range" min="0" max="1" step="0.05" value="0.9" />
+              </label>
+            </div>
+            <div class="text-tool-actions">
+              <button id="placeTextAnnotationBtn" class="btn secondary" type="button">Place On Map</button>
+              <button id="removeTextAnnotationBtn" class="btn secondary" type="button">Remove Selected</button>
+              <button id="clearTextAnnotationsBtn" class="btn secondary" type="button">Clear Text</button>
+            </div>
+          </div>
+        </div>
+
         <button id="exportHierarchyBtn" class="btn secondary">Export Hierarchy</button>
         <button id="exportDisplayedBtn" class="btn secondary" disabled>Export Displayed</button>
         <button id="exportBtn" class="btn secondary" disabled>Export Results</button>
@@ -55,7 +196,7 @@
 
     <main class="dashboard">
       <section class="sidebar">
-        <div class="card upload-card">
+        <div class="card upload-card sidebar-import-card" hidden>
           <h2>Import Data</h2>
           <p class="subtitle">Upload Excel data and the app will normalize latitude and longitude before plotting.</p>
 
@@ -74,40 +215,357 @@
           <p id="importSummaryText" class="import-summary"></p>
         </div>
 
+        <div class="card bdd-card">
+          <div class="sidebar-section-header card-header-inline">
+            <div>
+              <h2>Overlay Layers</h2>
+              <p class="subtitle">Manage built-in BDD layers and imported overlays from one compact control panel.</p>
+            </div>
+            <button id="toggleOverlayLayersBtn" class="sidebar-section-toggle" type="button" aria-expanded="true" aria-controls="overlayLayersContent">▾</button>
+          </div>
 
+          <div id="overlayLayersContent">
+            <div class="bdd-actions sidebar-import-actions" hidden>
+              <button id="importSitesBtn" class="btn secondary">Import Sites Workbook</button>
+              <button id="clearSitesBtn" class="btn secondary">Clear</button>
+              <input type="file" id="sitesFileInput" accept=".xlsx, .xls" hidden />
+            </div>
 
+            <div class="bdd-actions sidebar-compact-actions">
+              <button id="clearSitesBtnCompact" class="btn secondary">Restore Built-in BDD</button>
+            </div>
 
+            <label class="text-tool-field bdd-legend-field">
+              <span>Legend name</span>
+              <input type="text" id="siteBddLegendName" value="Sites IAM" placeholder="Sites IAM" />
+            </label>
 
+            <p id="sitesImportSummaryText" class="import-summary">No sites workbook imported yet.</p>
+
+            <div class="bdd-mode-section">
+              <span class="control-label">Display Mode</span>
+              <div class="bdd-mode-toggle">
+                <label class="mode-chip">
+                  <input type="radio" name="bddDisplayMode" id="bddModeSites" value="sites" checked />
+                  <span>Sites (dots)</span>
+                </label>
+                <label class="mode-chip">
+                  <input type="radio" name="bddDisplayMode" id="bddModeSectors" value="sectors" />
+                  <span>Sectors</span>
+                </label>
+              </div>
+            </div>
+
+            <div class="bdd-mode-section">
+              <div class="bdd-range-row">
+                <div class="bdd-range-header">
+                  <span>Global sector length</span>
+                  <span id="globalSectorLengthScaleValue" class="bdd-range-value">100%</span>
+                </div>
+                <input type="range" id="globalSectorLengthScaleInput" class="bdd-range-input" min="10" max="300" step="5" value="100" />
+              </div>
+            </div>
+
+            <div id="bddLayerGrid" class="bdd-layer-grid">
+            <div id="rowBdd2G" class="bdd-layer-row">
+              <label class="bdd-visibility">
+                <input type="checkbox" id="toggleBdd2G" checked />
+                <span>BDD 2G</span>
+              </label>
+              <div class="bdd-order-actions">
+                <button id="moveUpBdd2G" class="btn icon-only small bdd-order-btn" type="button" title="Move BDD 2G higher">↑</button>
+                <button id="moveDownBdd2G" class="btn icon-only small bdd-order-btn" type="button" title="Move BDD 2G lower">↓</button>
+              </div>
+              <button id="toggleSettingsBdd2G" class="btn icon-only small bdd-settings-toggle" type="button" title="Toggle BDD 2G settings" aria-expanded="false" aria-controls="controlsBdd2G">⚙</button>
+              <input type="color" id="colorBdd2G" value="#2b19ff" class="bdd-color-input" />
+              <span id="countBdd2G" class="bdd-count">0 sites</span>
+              <div id="controlsBdd2G" class="bdd-layer-controls">
+                <label class="bdd-inline-check">
+                  <input type="checkbox" id="showNamesBdd2G" />
+                  <span>Show site names</span>
+                </label>
+
+                <div class="bdd-mini-grid">
+                  <div class="bdd-range-row">
+                    <div class="bdd-range-header">
+                      <span>Site size</span>
+                      <span id="siteSizeValueBdd2G" class="bdd-range-value">4 px</span>
+                    </div>
+                    <input type="range" id="siteSizeInputBdd2G" class="bdd-range-input" min="2" max="14" step="1" value="4" />
+                  </div>
+
+                  <div class="bdd-range-row">
+                    <div class="bdd-range-header">
+                      <span>Site opacity</span>
+                      <span id="siteOpacityValueBdd2G" class="bdd-range-value">72%</span>
+                    </div>
+                    <input type="range" id="siteOpacityInputBdd2G" class="bdd-range-input" min="0.1" max="1" step="0.05" value="0.72" />
+                  </div>
+
+                  <div class="bdd-range-row">
+                    <div class="bdd-range-header">
+                      <span>Sector length</span>
+                      <span id="sectorLengthValueBdd2G" class="bdd-range-value">800 m</span>
+                    </div>
+                    <input type="range" id="sectorLengthInputBdd2G" class="bdd-range-input" min="10" max="3000" step="10" value="800" />
+                  </div>
+
+                  <div class="bdd-range-row">
+                    <div class="bdd-range-header">
+                      <span>Sector width</span>
+                      <span id="sectorWidthValueBdd2G" class="bdd-range-value">36°</span>
+                    </div>
+                    <input type="range" id="sectorWidthInputBdd2G" class="bdd-range-input" min="10" max="90" step="2" value="36" />
+                  </div>
+
+                  <div class="bdd-range-row">
+                    <div class="bdd-range-header">
+                      <span>Sector opacity</span>
+                      <span id="sectorOpacityValueBdd2G" class="bdd-range-value">20%</span>
+                    </div>
+                    <input type="range" id="sectorOpacityInputBdd2G" class="bdd-range-input" min="0.05" max="1" step="0.05" value="0.2" />
+                  </div>
+
+                  <label class="text-tool-field bdd-color-field">
+                    <span>Name text color</span>
+                    <input type="color" id="labelTextColorBdd2G" value="#ffffff" />
+                  </label>
+
+                  <label class="text-tool-field bdd-color-field">
+                    <span>Name background</span>
+                    <input type="color" id="labelBackgroundColorBdd2G" value="#2b19ff" />
+                  </label>
+
+                  <div class="bdd-range-row">
+                    <div class="bdd-range-header">
+                      <span>Name bg opacity</span>
+                      <span id="labelBackgroundOpacityValueBdd2G" class="bdd-range-value">88%</span>
+                    </div>
+                    <input type="range" id="labelBackgroundOpacityInputBdd2G" class="bdd-range-input" min="0" max="1" step="0.05" value="0.88" />
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div id="rowBdd3G" class="bdd-layer-row">
+              <label class="bdd-visibility">
+                <input type="checkbox" id="toggleBdd3G" checked />
+                <span>BDD 3G</span>
+              </label>
+              <div class="bdd-order-actions">
+                <button id="moveUpBdd3G" class="btn icon-only small bdd-order-btn" type="button" title="Move BDD 3G higher">↑</button>
+                <button id="moveDownBdd3G" class="btn icon-only small bdd-order-btn" type="button" title="Move BDD 3G lower">↓</button>
+              </div>
+              <button id="toggleSettingsBdd3G" class="btn icon-only small bdd-settings-toggle" type="button" title="Toggle BDD 3G settings" aria-expanded="false" aria-controls="controlsBdd3G">⚙</button>
+              <input type="color" id="colorBdd3G" value="#f6f3ef" class="bdd-color-input" />
+              <span id="countBdd3G" class="bdd-count">0 sites</span>
+              <div id="controlsBdd3G" class="bdd-layer-controls">
+                <label class="bdd-inline-check">
+                  <input type="checkbox" id="showNamesBdd3G" checked />
+                  <span>Show site names</span>
+                </label>
+
+                <div class="bdd-mini-grid">
+                  <div class="bdd-range-row">
+                    <div class="bdd-range-header">
+                      <span>Site size</span>
+                      <span id="siteSizeValueBdd3G" class="bdd-range-value">4 px</span>
+                    </div>
+                    <input type="range" id="siteSizeInputBdd3G" class="bdd-range-input" min="2" max="14" step="1" value="4" />
+                  </div>
+
+                  <div class="bdd-range-row">
+                    <div class="bdd-range-header">
+                      <span>Site opacity</span>
+                      <span id="siteOpacityValueBdd3G" class="bdd-range-value">72%</span>
+                    </div>
+                    <input type="range" id="siteOpacityInputBdd3G" class="bdd-range-input" min="0.1" max="1" step="0.05" value="0.72" />
+                  </div>
+
+                  <div class="bdd-range-row">
+                    <div class="bdd-range-header">
+                      <span>Sector length</span>
+                      <span id="sectorLengthValueBdd3G" class="bdd-range-value">800 m</span>
+                    </div>
+                    <input type="range" id="sectorLengthInputBdd3G" class="bdd-range-input" min="10" max="3000" step="10" value="800" />
+                  </div>
+
+                  <div class="bdd-range-row">
+                    <div class="bdd-range-header">
+                      <span>Sector width</span>
+                      <span id="sectorWidthValueBdd3G" class="bdd-range-value">36°</span>
+                    </div>
+                    <input type="range" id="sectorWidthInputBdd3G" class="bdd-range-input" min="10" max="90" step="2" value="36" />
+                  </div>
+
+                  <div class="bdd-range-row">
+                    <div class="bdd-range-header">
+                      <span>Sector opacity</span>
+                      <span id="sectorOpacityValueBdd3G" class="bdd-range-value">20%</span>
+                    </div>
+                    <input type="range" id="sectorOpacityInputBdd3G" class="bdd-range-input" min="0.05" max="1" step="0.05" value="0.2" />
+                  </div>
+
+                  <label class="text-tool-field bdd-color-field">
+                    <span>Name text color</span>
+                    <input type="color" id="labelTextColorBdd3G" value="#020617" />
+                  </label>
+
+                  <label class="text-tool-field bdd-color-field">
+                    <span>Name background</span>
+                    <input type="color" id="labelBackgroundColorBdd3G" value="#f6f3ef" />
+                  </label>
+
+                  <div class="bdd-range-row">
+                    <div class="bdd-range-header">
+                      <span>Name bg opacity</span>
+                      <span id="labelBackgroundOpacityValueBdd3G" class="bdd-range-value">92%</span>
+                    </div>
+                    <input type="range" id="labelBackgroundOpacityInputBdd3G" class="bdd-range-input" min="0" max="1" step="0.05" value="0.92" />
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div id="rowBdd4G" class="bdd-layer-row">
+              <label class="bdd-visibility">
+                <input type="checkbox" id="toggleBdd4G" checked />
+                <span>BDD 4G</span>
+              </label>
+              <div class="bdd-order-actions">
+                <button id="moveUpBdd4G" class="btn icon-only small bdd-order-btn" type="button" title="Move BDD 4G higher">↑</button>
+                <button id="moveDownBdd4G" class="btn icon-only small bdd-order-btn" type="button" title="Move BDD 4G lower">↓</button>
+              </div>
+              <button id="toggleSettingsBdd4G" class="btn icon-only small bdd-settings-toggle" type="button" title="Toggle BDD 4G settings" aria-expanded="false" aria-controls="controlsBdd4G">⚙</button>
+              <input type="color" id="colorBdd4G" value="#ff3b6b" class="bdd-color-input" />
+              <span id="countBdd4G" class="bdd-count">0 sites</span>
+              <div id="controlsBdd4G" class="bdd-layer-controls">
+                <label class="bdd-inline-check">
+                  <input type="checkbox" id="showNamesBdd4G" />
+                  <span>Show site names</span>
+                </label>
+
+                <div class="bdd-mini-grid">
+                  <div class="bdd-range-row">
+                    <div class="bdd-range-header">
+                      <span>Site size</span>
+                      <span id="siteSizeValueBdd4G" class="bdd-range-value">4 px</span>
+                    </div>
+                    <input type="range" id="siteSizeInputBdd4G" class="bdd-range-input" min="2" max="14" step="1" value="4" />
+                  </div>
+
+                  <div class="bdd-range-row">
+                    <div class="bdd-range-header">
+                      <span>Site opacity</span>
+                      <span id="siteOpacityValueBdd4G" class="bdd-range-value">72%</span>
+                    </div>
+                    <input type="range" id="siteOpacityInputBdd4G" class="bdd-range-input" min="0.1" max="1" step="0.05" value="0.72" />
+                  </div>
+
+                  <div class="bdd-range-row">
+                    <div class="bdd-range-header">
+                      <span>Sector length</span>
+                      <span id="sectorLengthValueBdd4G" class="bdd-range-value">800 m</span>
+                    </div>
+                    <input type="range" id="sectorLengthInputBdd4G" class="bdd-range-input" min="10" max="3000" step="10" value="800" />
+                  </div>
+
+                  <div class="bdd-range-row">
+                    <div class="bdd-range-header">
+                      <span>Sector width</span>
+                      <span id="sectorWidthValueBdd4G" class="bdd-range-value">36°</span>
+                    </div>
+                    <input type="range" id="sectorWidthInputBdd4G" class="bdd-range-input" min="10" max="90" step="2" value="36" />
+                  </div>
+
+                  <div class="bdd-range-row">
+                    <div class="bdd-range-header">
+                      <span>Sector opacity</span>
+                      <span id="sectorOpacityValueBdd4G" class="bdd-range-value">20%</span>
+                    </div>
+                    <input type="range" id="sectorOpacityInputBdd4G" class="bdd-range-input" min="0.05" max="1" step="0.05" value="0.2" />
+                  </div>
+
+                  <label class="text-tool-field bdd-color-field">
+                    <span>Name text color</span>
+                    <input type="color" id="labelTextColorBdd4G" value="#ffffff" />
+                  </label>
+
+                  <label class="text-tool-field bdd-color-field">
+                    <span>Name background</span>
+                    <input type="color" id="labelBackgroundColorBdd4G" value="#ff3b6b" />
+                  </label>
+
+                  <div class="bdd-range-row">
+                    <div class="bdd-range-header">
+                      <span>Name bg opacity</span>
+                      <span id="labelBackgroundOpacityValueBdd4G" class="bdd-range-value">90%</span>
+                    </div>
+                    <input type="range" id="labelBackgroundOpacityInputBdd4G" class="bdd-range-input" min="0" max="1" step="0.05" value="0.9" />
+                  </div>
+                </div>
+              </div>
+            </div>
+            </div>
+
+            <div class="bdd-kml-section">
+              <div class="sidebar-subsection-header">
+                <span class="control-label">Imported Overlays</span>
+                <button id="toggleImportedOverlaysBtn" class="sidebar-section-toggle sidebar-section-toggle--small" type="button" aria-expanded="true" aria-controls="importedOverlaysContent">▾</button>
+              </div>
+              <div id="importedOverlaysContent">
+                <div class="bdd-actions sidebar-import-actions" hidden>
+                  <button id="importKmlSitesBtn" class="btn secondary">Import KML/KMZ</button>
+                  <button id="clearKmlSitesBtn" class="btn secondary">Clear KML/KMZ</button>
+                  <input type="file" id="kmlSitesFileInput" accept=".kml,.kmz" multiple hidden />
+                </div>
+                <div class="bdd-actions sidebar-compact-actions">
+                  <button id="clearKmlSitesBtnCompact" class="btn secondary">Clear Imported Overlays</button>
+                </div>
+                <p id="kmlSitesSummaryText" class="import-summary">No KML/KMZ site overlays imported yet.</p>
+                <div id="kmlSiteOverlayList" class="bdd-layer-grid"></div>
+              </div>
+            </div>
+
+            <p id="sitesRenderHint" class="small-note"></p>
+          </div>
+        </div>
+
+        <div class="sidebar-utility-grid">
         <div class="card layers-card">
-          <h2>Hierarchy & Layers</h2>
-
-          <div class="hierarchy-section">
-            <div class="section-header">
-              <h3>Regions</h3>
-              <button id="resetRegionBtn" class="btn icon-only small" title="Show All">↻</button>
-            </div>
-            <div id="regionList" class="scroll-list"></div>
+          <div class="sidebar-section-header card-header-inline">
+            <h2>Hierarchy & Layers</h2>
+            <button id="toggleHierarchyLayersBtn" class="sidebar-section-toggle" type="button" aria-expanded="true" aria-controls="hierarchyLayersContent">▾</button>
           </div>
-
-          <div class="hierarchy-section">
-            <div class="section-header">
-              <h3>Directions Régionales (DR)</h3>
+          <div id="hierarchyLayersContent" class="hierarchy-grid">
+            <div class="hierarchy-section">
+              <div class="section-header">
+                <h3>Regions</h3>
+                <button id="resetRegionBtn" class="btn icon-only small" title="Show All">↻</button>
+              </div>
+              <div id="regionList" class="scroll-list"></div>
             </div>
-            <div id="drList" class="scroll-list"></div>
-          </div>
 
-          <div class="hierarchy-section">
-            <div class="section-header">
-              <h3>Provinces</h3>
+            <div class="hierarchy-section">
+              <div class="section-header">
+                <h3>Directions Régionales (DR)</h3>
+              </div>
+              <div id="drList" class="scroll-list"></div>
             </div>
-            <div id="provinceList" class="scroll-list"></div>
-          </div>
 
-          <div class="hierarchy-section">
-            <div class="section-header">
-              <h3>Communes</h3>
+            <div class="hierarchy-section">
+              <div class="section-header">
+                <h3>Provinces</h3>
+              </div>
+              <div id="provinceList" class="scroll-list"></div>
             </div>
-            <div id="communeList" class="scroll-list"></div>
+
+            <div class="hierarchy-section">
+              <div class="section-header">
+                <h3>Communes</h3>
+              </div>
+              <div id="communeList" class="scroll-list"></div>
+            </div>
           </div>
         </div>
 
@@ -127,24 +585,34 @@
           </div>
         </div>
 
-        <div class="card filters-card" id="filtersCard" style="display: none; margin-top: 1rem;">
-          <h2>Filters</h2>
-          <div class="layer-toggle">
-            <input type="checkbox" id="filterEmptySS">
-            <label for="filterEmptySS">Show Only Empty SS</label>
+        <div class="card filters-card" id="filtersCard" style="display: none;">
+          <div class="sidebar-section-header card-header-inline">
+            <h2>Filters</h2>
+            <button id="toggleFiltersBtn" class="sidebar-section-toggle" type="button" aria-expanded="true" aria-controls="filtersContent">▾</button>
           </div>
-          <div class="layer-toggle">
-            <input type="checkbox" id="filterGeographyDivergence">
-            <label for="filterGeographyDivergence">Show Only Geography Divergences</label>
+          <div id="filtersContent">
+            <div class="layer-toggle">
+              <input type="checkbox" id="filterEmptySS">
+              <label for="filterEmptySS">Show Only Empty SS</label>
+            </div>
+            <div class="layer-toggle">
+              <input type="checkbox" id="filterGeographyDivergence">
+              <label for="filterGeographyDivergence">Show Only Geography Divergences</label>
+            </div>
+            <div class="layer-toggle">
+              <input type="checkbox" id="filterHighRisk">
+              <label for="filterHighRisk">Show Only High Review Risk</label>
+            </div>
+            <div class="layer-toggle">
+              <input type="checkbox" id="filterFocusCircles" checked>
+              <label for="filterFocusCircles">Show Reference Location Circles</label>
+            </div>
+            <div class="audit-filter-bar" id="auditFilterBar" style="display: none;">
+              <span class="audit-filter-label" id="auditFilterLabel">Active audit filter</span>
+              <button id="clearAuditFilterBtn" class="btn secondary small-text">Clear</button>
+            </div>
           </div>
-          <div class="layer-toggle">
-            <input type="checkbox" id="filterHighRisk">
-            <label for="filterHighRisk">Show Only High Review Risk</label>
-          </div>
-          <div class="audit-filter-bar" id="auditFilterBar" style="display: none;">
-            <span class="audit-filter-label" id="auditFilterLabel">Active audit filter</span>
-            <button id="clearAuditFilterBtn" class="btn secondary small-text">Clear</button>
-          </div>
+        </div>
         </div>
       </section>
 
