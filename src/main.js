@@ -96,7 +96,7 @@ const CUSTOM_SITE_OVERLAY_COLORS = Object.freeze([
     '#e879f9',
     '#fb7185'
 ]);
-const DEFAULT_SITE_BDD_DATA_URL = '/data/site_bdd_builtin.json';
+const DEFAULT_SITE_BDD_DATA_URL = './data/site_bdd_builtin.json';
 
 function createDefaultSiteBddRenderSettings(tech) {
     const techDefaults = tech ? SITE_BDD_CONFIG[tech]?.defaultSettings : null;
@@ -303,17 +303,17 @@ const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
     maxZoom: 19
 });
 
-const googleSat = L.tileLayer('http://{s}.google.com/vt/lyrs=s&x={x}&y={y}&z={z}', {
+const googleSat = L.tileLayer('https://{s}.google.com/vt/lyrs=s&x={x}&y={y}&z={z}', {
     maxZoom: 20,
     subdomains: ['mt0', 'mt1', 'mt2', 'mt3']
 });
 
-const googleHybrid = L.tileLayer('http://{s}.google.com/vt/lyrs=y&x={x}&y={y}&z={z}', {
+const googleHybrid = L.tileLayer('https://{s}.google.com/vt/lyrs=y&x={x}&y={y}&z={z}', {
     maxZoom: 20,
     subdomains: ['mt0', 'mt1', 'mt2', 'mt3']
 });
 
-const googleTerrain = L.tileLayer('http://{s}.google.com/vt/lyrs=p&x={x}&y={y}&z={z}', {
+const googleTerrain = L.tileLayer('https://{s}.google.com/vt/lyrs=p&x={x}&y={y}&z={z}', {
     maxZoom: 20,
     subdomains: ['mt0', 'mt1', 'mt2', 'mt3']
 });
@@ -587,14 +587,14 @@ async function loadGeoData() {
     try {
         const timestamp = new Date().getTime();
         const [regionsRes, provincesRes, communesRes, emergencyRes, drMappingRes, drsRes, lieuxRes, inhabitedAreasRes] = await Promise.all([
-            fetch(`/data/regions.json?v=${timestamp}`),
-            fetch(`/data/provinces.json?v=${timestamp}`),
-            fetch(`/data/communes.json?v=${timestamp}`),
-            fetch(`/data/emergency_numbers.json?v=${timestamp}`),
-            fetch(`/data/province_to_dr.json?v=${timestamp}`),
-            fetch(`/data/drs.json?v=${timestamp}`),
-            fetch(`/data/lieux_places.json?v=${timestamp}`),
-            fetch(`/data/zones_habitees_areas.json?v=${timestamp}`)
+            fetch(`./data/regions.json?v=${timestamp}`),
+            fetch(`./data/provinces.json?v=${timestamp}`),
+            fetch(`./data/communes.json?v=${timestamp}`),
+            fetch(`./data/emergency_numbers.json?v=${timestamp}`),
+            fetch(`./data/province_to_dr.json?v=${timestamp}`),
+            fetch(`./data/drs.json?v=${timestamp}`),
+            fetch(`./data/lieux_places.json?v=${timestamp}`),
+            fetch(`./data/zones_habitees_areas.json?v=${timestamp}`)
         ]);
 
         state.layers.regions = await regionsRes.json();
