@@ -195,7 +195,17 @@
     </nav>
 
     <main class="dashboard">
-      <section class="sidebar">
+      <section class="sidebar" id="sidebarPanel" aria-label="Control panel">
+        <button id="mobileSheetToggle" class="mobile-sheet-toggle" type="button" aria-expanded="false" aria-controls="sidebarBody">
+          <span class="mobile-sheet-handle" aria-hidden="true"></span>
+          <span class="mobile-sheet-copy">
+            <span class="mobile-sheet-title">Controls & Layers</span>
+            <span id="mobileSheetSummary" class="mobile-sheet-summary">Search, overlays, hierarchy, filters, and exports.</span>
+          </span>
+          <span class="mobile-sheet-chevron" aria-hidden="true">▴</span>
+        </button>
+
+        <div class="sidebar-body" id="sidebarBody">
         <div class="card upload-card sidebar-import-card" hidden>
           <h2>Import Data</h2>
           <p class="subtitle">Upload Excel data and the app will normalize latitude and longitude before plotting.</p>
@@ -612,6 +622,7 @@
               <button id="clearAuditFilterBtn" class="btn secondary small-text">Clear</button>
             </div>
           </div>
+        </div>
         </div>
         </div>
       </section>

@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "test": "node --test",
     "preview": "vite preview",
     "convert-data": "node scripts/convert_data.js",
     "convert-startup-data": "node scripts/convert_startup_data.js",
