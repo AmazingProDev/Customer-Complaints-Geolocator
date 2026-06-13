@@ -3,6 +3,8 @@ import * as L from 'leaflet';
 import * as turf from '@turf/turf';
 import 'leaflet-control-geocoder/dist/Control.Geocoder.css';
 import 'leaflet-control-geocoder';
+import { createCoordinateSearchResult } from './coordinateSearch.js';
+import { collectExactSiteNameMatches } from './siteNameSearch.js';
 
 const SITE_BDD_CONFIG = {
     '2G': {
@@ -488,10 +490,15 @@ const clearWikimapiaKeyBtn = document.getElementById('clearWikimapiaKeyBtn');
 const wikimapiaKeyStatus = document.getElementById('wikimapiaKeyStatus');
 const toggleSidebarBtn = document.getElementById('toggleSidebarBtn');
 const sidebar = document.querySelector('.sidebar');
+const mobileSheetToggle = document.getElementById('mobileSheetToggle');
+const mobileSheetSummary = document.getElementById('mobileSheetSummary');
 const manualSiteName = document.getElementById('manualSiteName');
 const manualLat = document.getElementById('manualLat');
 const manualLng = document.getElementById('manualLng');
 const addSiteBtn = document.getElementById('addSiteBtn');
+const mobileViewportQuery = window.matchMedia('(max-width: 900px)');
+const MOBILE_SHEET_STORAGE_KEY = 'customer-complaints-mobile-sheet-expanded';
+let mobileSheetExpanded = readStoredMobileSheetExpanded();
 
 const siteBddControls = {
     '2G': {
@@ -2665,7 +2672,9 @@ function formatSearchResultLabel(result) {
 }
 
 function getSearchSourceLabel(category) {
+    if (category === 'coordinates') return 'Coordinates';
     if (category === 'site') return 'Imported site';
+    if (category === 'site_bdd') return 'Sites BDD';
     if (category === 'lieu') return 'Lieux reference';
     if (category === 'inhabited_area') return 'Zones habitees';
     if (category === 'commune') return 'Commune boundary';
@@ -2677,6 +2686,10 @@ function getSearchSourceLabel(category) {
 }
 
 function getSearchResultMetaLabel(result) {
+    if (result?.metaLabel) {
+        return result.metaLabel;
+    }
+
     const parts = [
         result.sourceLabel || getSearchSourceLabel(result.category),
         result.subLabel
@@ -2841,6 +2854,16 @@ function findLocalSearchResults(queryText) {
     });
 
     return deduped.slice(0, 5);
+}
+
+function findExactSiteNameMatches(queryText) {
+    return collectExactSiteNameMatches({
+        queryText,
+        processedPoints: state.processedPoints,
+        siteBddState: state.siteBdd,
+        siteBddConfig: SITE_BDD_CONFIG,
+        techOrder: SITE_BDD_TECH_ORDER
+    });
 }
 
 function getActivePoint() {
@@ -3375,6 +3398,7 @@ function getSearchResultRadiusMeters(result) {
         }
     }
 
+    if (result.category === 'coordinates') return 600;
     if (result.category === 'site') return 600;
     if (result.category === 'lieu') return 900;
     if (result.category === 'inhabited_area') return 1400;
@@ -3476,8 +3500,27 @@ function openSearchResult(result) {
     searchResultsDropdown.style.display = 'none';
     fillManualFieldsFromSearchResult(result);
 
-    if (result.category === 'site' && result.point) {
+    if (result.point) {
         focusPointOnMap(result.point);
+        return;
+    }
+
+    if (result.category === 'site_bdd') {
+        state.activePointId = null;
+        clearFocusOverlays();
+        map.flyTo([result.lat, result.lng], Math.max(map.getZoom(), 15));
+
+        window.setTimeout(() => {
+            L.popup()
+                .setLatLng([result.lat, result.lng])
+                .setContent(formatSiteBddPopup({
+                    siteName: result.name,
+                    lat: result.lat,
+                    lng: result.lng,
+                    sectorCount: result.sectorCount || 0
+                }, result.tech, 'sites'))
+                .openOn(map);
+        }, 250);
         return;
     }
 
@@ -3511,7 +3554,7 @@ function renderSearchResults(results, { loadingWikimapia = false } = {}) {
     if (!results.length) {
         searchResultsDropdown.innerHTML = loadingWikimapia
             ? '<div class="search-result-item"><span class="search-result-title">Searching Wikimapia...</span><span class="search-result-meta">Checking local data and Wikimapia suggestions.</span></div>'
-            : '<div class="search-result-item"><span class="search-result-title">No result found</span><span class="search-result-meta">Try site, locality, commune, province, DR, or region.</span></div>';
+            : '<div class="search-result-item"><span class="search-result-title">No result found</span><span class="search-result-meta">Try site, locality, commune, province, DR, region, or lat lng.</span></div>';
         searchResultsDropdown.style.display = 'block';
         return;
     }
@@ -3545,6 +3588,20 @@ function renderSearchResults(results, { loadingWikimapia = false } = {}) {
 async function runSiteSearch() {
     const query = siteSearchInput.value.trim();
     if (!query) return;
+
+    const coordinateResult = createCoordinateSearchResult(query);
+    if (coordinateResult) {
+        state.searchRequestId += 1;
+        renderSearchResults([coordinateResult]);
+        return;
+    }
+
+    const exactSiteNameMatches = findExactSiteNameMatches(query);
+    if (exactSiteNameMatches.length) {
+        state.searchRequestId += 1;
+        renderSearchResults(exactSiteNameMatches);
+        return;
+    }
 
     const requestId = ++state.searchRequestId;
     const localResults = findLocalSearchResults(query);
@@ -3682,8 +3739,9 @@ function openImportMenuPopover() {
     toggleImportMenuBtn.setAttribute('aria-expanded', 'true');
 
     const buttonRect = toggleImportMenuBtn.getBoundingClientRect();
-    importMenuPopover.style.left = `${Math.max(12, buttonRect.right - 220)}px`;
-    importMenuPopover.style.top = `${buttonRect.bottom + 10}px`;
+    const next = clampFloatingPopoverPosition(importMenuPopover, buttonRect.right - 220, buttonRect.bottom + 10);
+    importMenuPopover.style.left = `${next.left}px`;
+    importMenuPopover.style.top = `${next.top}px`;
     importMenuPopover.style.right = 'auto';
 }
 
@@ -3724,6 +3782,77 @@ function clampFloatingPopoverPosition(element, left, top) {
         left: Math.min(Math.max(12, left), maxLeft),
         top: Math.min(Math.max(12, top), maxTop)
     };
+}
+
+function readStoredMobileSheetExpanded() {
+    try {
+        return window.localStorage.getItem(MOBILE_SHEET_STORAGE_KEY) === 'true';
+    } catch (error) {
+        return false;
+    }
+}
+
+function isMobileLayout() {
+    return mobileViewportQuery.matches;
+}
+
+function updateSidebarToggleLabel() {
+    if (!toggleSidebarBtn || !sidebar) return;
+
+    const expanded = isMobileLayout()
+        ? sidebar.classList.contains('mobile-expanded')
+        : !sidebar.classList.contains('collapsed');
+
+    const label = isMobileLayout()
+        ? (expanded ? 'Collapse controls' : 'Expand controls')
+        : (expanded ? 'Collapse sidebar' : 'Open sidebar');
+
+    toggleSidebarBtn.setAttribute('aria-label', label);
+    toggleSidebarBtn.title = label;
+}
+
+function updateMobileSheetSummaryText(total = 0, matched = 0, emptySS = 0) {
+    if (!mobileSheetSummary) return;
+
+    if (Number(total) > 0) {
+        mobileSheetSummary.textContent = `${total} points • ${matched} matched • ${emptySS} empty SS`;
+        return;
+    }
+
+    mobileSheetSummary.textContent = 'Search, overlays, hierarchy, filters, and exports.';
+}
+
+function applyResponsiveSidebarState({ invalidateMap = true } = {}) {
+    if (!sidebar) return;
+
+    if (isMobileLayout()) {
+        sidebar.classList.remove('collapsed');
+        sidebar.classList.toggle('mobile-expanded', mobileSheetExpanded);
+        mobileSheetToggle?.setAttribute('aria-expanded', String(mobileSheetExpanded));
+    } else {
+        sidebar.classList.remove('mobile-expanded');
+        mobileSheetToggle?.setAttribute('aria-expanded', 'false');
+    }
+
+    updateSidebarToggleLabel();
+
+    if (invalidateMap) {
+        window.setTimeout(() => {
+            map.invalidateSize();
+        }, 320);
+    }
+}
+
+function setMobileSheetExpanded(expanded, options = {}) {
+    mobileSheetExpanded = expanded;
+
+    try {
+        window.localStorage.setItem(MOBILE_SHEET_STORAGE_KEY, String(expanded));
+    } catch (error) {
+        // Ignore storage issues and keep the UI responsive.
+    }
+
+    applyResponsiveSidebarState(options);
 }
 
 function applyTextPopoverPosition(left, top) {
@@ -5175,6 +5304,7 @@ function updateStats(total, matched, emptySS) {
     totalPointsEl.textContent = total;
     matchedPointsEl.textContent = matched;
     emptySSPointsEl.textContent = emptySS;
+    updateMobileSheetSummaryText(total, matched, emptySS);
 }
 
 function updateLegend() {
@@ -6290,13 +6420,31 @@ document.addEventListener('click', (event) => {
 
 // --- Sidebar Toggle ---
 toggleSidebarBtn.addEventListener('click', () => {
-    sidebar.classList.toggle('collapsed');
+    if (isMobileLayout()) {
+        setMobileSheetExpanded(!sidebar.classList.contains('mobile-expanded'));
+        return;
+    }
 
-    // Resize map after transition
-    setTimeout(() => {
-        map.invalidateSize();
-    }, 300);
+    sidebar.classList.toggle('collapsed');
+    applyResponsiveSidebarState();
 });
+
+mobileSheetToggle?.addEventListener('click', () => {
+    setMobileSheetExpanded(!sidebar.classList.contains('mobile-expanded'));
+});
+
+if (typeof mobileViewportQuery.addEventListener === 'function') {
+    mobileViewportQuery.addEventListener('change', () => {
+        applyResponsiveSidebarState();
+    });
+} else if (typeof mobileViewportQuery.addListener === 'function') {
+    mobileViewportQuery.addListener(() => {
+        applyResponsiveSidebarState();
+    });
+}
+
+updateMobileSheetSummaryText();
+applyResponsiveSidebarState({ invalidateMap: false });
 
 // --- Manual Add ---
 addSiteBtn.addEventListener('click', () => {
