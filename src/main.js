@@ -3,6 +3,7 @@ import * as L from 'leaflet';
 import * as turf from '@turf/turf';
 import 'leaflet-control-geocoder/dist/Control.Geocoder.css';
 import 'leaflet-control-geocoder';
+import { createCoordinateSearchResult } from './coordinateSearch.js';
 import { collectExactSiteNameMatches } from './siteNameSearch.js';
 
 const SITE_BDD_CONFIG = {
@@ -2671,6 +2672,7 @@ function formatSearchResultLabel(result) {
 }
 
 function getSearchSourceLabel(category) {
+    if (category === 'coordinates') return 'Coordinates';
     if (category === 'site') return 'Imported site';
     if (category === 'site_bdd') return 'Sites BDD';
     if (category === 'lieu') return 'Lieux reference';
@@ -3396,6 +3398,7 @@ function getSearchResultRadiusMeters(result) {
         }
     }
 
+    if (result.category === 'coordinates') return 600;
     if (result.category === 'site') return 600;
     if (result.category === 'lieu') return 900;
     if (result.category === 'inhabited_area') return 1400;
@@ -3551,7 +3554,7 @@ function renderSearchResults(results, { loadingWikimapia = false } = {}) {
     if (!results.length) {
         searchResultsDropdown.innerHTML = loadingWikimapia
             ? '<div class="search-result-item"><span class="search-result-title">Searching Wikimapia...</span><span class="search-result-meta">Checking local data and Wikimapia suggestions.</span></div>'
-            : '<div class="search-result-item"><span class="search-result-title">No result found</span><span class="search-result-meta">Try site, locality, commune, province, DR, or region.</span></div>';
+            : '<div class="search-result-item"><span class="search-result-title">No result found</span><span class="search-result-meta">Try site, locality, commune, province, DR, region, or lat lng.</span></div>';
         searchResultsDropdown.style.display = 'block';
         return;
     }
@@ -3585,6 +3588,13 @@ function renderSearchResults(results, { loadingWikimapia = false } = {}) {
 async function runSiteSearch() {
     const query = siteSearchInput.value.trim();
     if (!query) return;
+
+    const coordinateResult = createCoordinateSearchResult(query);
+    if (coordinateResult) {
+        state.searchRequestId += 1;
+        renderSearchResults([coordinateResult]);
+        return;
+    }
 
     const exactSiteNameMatches = findExactSiteNameMatches(query);
     if (exactSiteNameMatches.length) {
